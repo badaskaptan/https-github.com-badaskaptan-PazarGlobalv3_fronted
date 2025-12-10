@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import VoiceChat from './VoiceChat';
 
 type Message = {
   id: string;
@@ -122,6 +123,7 @@ export default function ChatBox() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [displayCount, setDisplayCount] = useState(3);
+  const [voiceMode, setVoiceMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMessageRef = useRef<string>('');
@@ -484,6 +486,49 @@ export default function ChatBox() {
     }
   };
 
+  const toggleVoiceMode = () => {
+    setVoiceMode(!voiceMode);
+  };
+
+  const handleVoiceTranscript = (text: string) => {
+    // Add corrected voice text as user message
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: text,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, newMessage]);
+    
+    // Send to agent
+    sendMessageToAgent(text);
+  };
+
+  const handleAgentResponse = (responseText: string) => {
+    console.log('🎤 Voice mode:', voiceMode);
+    console.log('🎤 speakResponse available:', !!(window as any).speakResponse);
+    console.log('🎤 Response text:', responseText);
+    
+    // Speak agent response using VoiceChat component
+    if (voiceMode && (window as any).speakResponse) {
+      console.log('✅ Calling speakResponse...');
+      (window as any).speakResponse(responseText);
+    } else {
+      console.log('❌ Cannot speak:', { voiceMode, hasFunction: !!(window as any).speakResponse });
+    }
+  };
+
+  // Update when new AI message arrives in voice mode
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.type === 'ai' && voiceMode) {
+        console.log('📨 New AI message in voice mode, triggering speech...');
+        handleAgentResponse(lastMessage.content);
+      }
+    }
+  }, [messages, voiceMode]);
+
   const toggleRecording = () => {
     setIsRecording(!isRecording);
     if (!isRecording) {
@@ -720,13 +765,24 @@ export default function ChatBox() {
               </div>
               <div className="flex items-center space-x-2">
                 <button
+                  onClick={toggleVoiceMode}
+                  title={voiceMode ? "Sesli Modu Kapat" : "Sesli Modu Aç"}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                    voiceMode ? 'bg-white/30 text-white' : 'hover:bg-white/20 text-white/80'
+                  }`}
+                >
+                  <i className={`${voiceMode ? 'ri-volume-up-fill' : 'ri-volume-mute-line'} text-xl`} />
+                </button>
+                <button
                   onClick={() => setIsOpen(false)}
+                  title="Küçült"
                   className="w-8 h-8 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <i className="ri-subtract-line text-white text-xl" />
                 </button>
                 <button
                   onClick={() => setIsOpen(false)}
+                  title="Kapat"
                   className="w-8 h-8 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 >
                   <i className="ri-close-line text-white text-xl" />
@@ -891,27 +947,26 @@ export default function ChatBox() {
                       handleSendMessage();
                     }
                   }}
-                  placeholder="Mesajınızı yazın..."
+                  placeholder={voiceMode ? "🎤 Sesli mod aktif - Mikrofona konuşun veya yazın" : "Mesajınızı yazın..."}
                   disabled={isTyping}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-full resize-none focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   rows={1}
                 />
 
-                <button
-                  onClick={toggleRecording}
-                  disabled={isTyping}
-                  className={`w-10 h-10 flex items-center justify-center rounded-full transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    isRecording
-                      ? 'bg-red-500 text-white animate-pulse'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <i className={`${isRecording ? 'ri-stop-circle-line' : 'ri-mic-line'} text-xl`} />
-                </button>
-
+                {/* Voice Chat Button (when voice mode active) */}
+                {voiceMode && (
+                  <div className="relative">
+                    <VoiceChat
+                      onTranscriptReady={handleVoiceTranscript}
+                      isEnabled={voiceMode}
+                    />
+                  </div>
+                )}
+                
                 <button
                   onClick={handleSendMessage}
                   disabled={!inputValue.trim() || isTyping}
+                  title="Gönder"
                   className="w-10 h-10 bg-gradient-primary text-white rounded-full flex items-center justify-center hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <i className="ri-send-plane-fill text-lg" />

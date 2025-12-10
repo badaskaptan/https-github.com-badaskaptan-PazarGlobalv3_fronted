@@ -5,7 +5,6 @@ import ListingCard from './components/ListingCard';
 import ChatBox from '../../components/feature/ChatBox';
 import TopNavigation from '../../components/feature/TopNavigation';
 import Footer from '../home/components/Footer';
-import { listings } from '../../mocks/listings';
 import { fetchListingsWithFilters, type DBListing } from '../../services/supabase';
 import { supabase } from '../../lib/supabase';
 import type { Listing, FilterState } from '../../types/listing';
@@ -25,10 +24,9 @@ export default function ListingsPage() {
   const [sortBy, setSortBy] = useState('newest');
   const [showFilters, setShowFilters] = useState(false);
 
-  // Use mock data by default, Supabase data when available
-  const [filteredListings, setFilteredListings] = useState<Listing[]>(listings);
+  // Only use real data from Supabase
+  const [filteredListings, setFilteredListings] = useState<Listing[]>([]);
   const [isLoadingFromSupabase, setIsLoadingFromSupabase] = useState(false);
-  const [useSupabaseData, setUseSupabaseData] = useState(true); // Toggle to switch between mock and real data
 
   const [filters, setFilters] = useState<FilterState>({
     categories: [],
@@ -49,13 +47,6 @@ export default function ListingsPage() {
 
   // Fetch from Supabase when filters change
   useEffect(() => {
-    if (!useSupabaseData) {
-      // Use mock data with client-side filtering
-      filterMockData();
-      return;
-    }
-
-    // Fetch from Supabase
     const fetchData = async () => {
       setIsLoadingFromSupabase(true);
       try {
@@ -87,90 +78,37 @@ export default function ListingsPage() {
           },
         }));
 
-        setFilteredListings(convertedListings);
+        // Sort the listings
+        let sortedListings = [...convertedListings];
+        switch (sortBy) {
+          case 'newest':
+            sortedListings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            break;
+          case 'oldest':
+            sortedListings.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            break;
+          case 'price-low':
+            sortedListings.sort((a, b) => a.price - b.price);
+            break;
+          case 'price-high':
+            sortedListings.sort((a, b) => b.price - a.price);
+            break;
+          case 'popular':
+            sortedListings.sort((a, b) => b.views - a.views);
+            break;
+        }
+
+        setFilteredListings(sortedListings);
       } catch (error) {
-        console.error('Failed to fetch from Supabase, using mock data:', error);
-        filterMockData(); // Fallback to mock data
+        console.error('Failed to fetch from Supabase:', error);
+        setFilteredListings([]);
       } finally {
         setIsLoadingFromSupabase(false);
       }
     };
 
     fetchData();
-  }, [filters, useSupabaseData]);
-
-  // Client-side filtering for mock data
-  const filterMockData = () => {
-    let result = [...listings];
-
-    // Kategori filtresi
-    if (filters.categories.length > 0) {
-      result = result.filter(item => filters.categories.includes(item.category));
-    }
-
-    // Fiyat filtresi
-    result = result.filter(
-      item => item.price >= filters.priceRange[0] && item.price <= filters.priceRange[1]
-    );
-
-    // Konum filtresi
-    if (filters.location) {
-      result = result.filter(item =>
-        item.location.toLowerCase().includes(filters.location.toLowerCase())
-      );
-    }
-
-    // Durum filtresi
-    if (filters.condition.length > 0) {
-      result = result.filter(item => filters.condition.includes(item.condition));
-    }
-
-    // Premium filtresi
-    if (filters.isPremium) {
-      result = result.filter(item => item.isPremium);
-    }
-
-    // Tarih filtresi
-    const now = new Date();
-    if (filters.dateRange !== 'all') {
-      result = result.filter(item => {
-        const itemDate = new Date(item.createdAt);
-        const diffDays = Math.floor((now.getTime() - itemDate.getTime()) / (1000 * 60 * 60 * 24));
-
-        switch (filters.dateRange) {
-          case 'today':
-            return diffDays === 0;
-          case 'week':
-            return diffDays <= 7;
-          case 'month':
-            return diffDays <= 30;
-          default:
-            return true;
-        }
-      });
-    }
-
-    // Sıralama
-    switch (sortBy) {
-      case 'newest':
-        result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        break;
-      case 'oldest':
-        result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-        break;
-      case 'price-low':
-        result.sort((a, b) => a.price - b.price);
-        break;
-      case 'price-high':
-        result.sort((a, b) => b.price - a.price);
-        break;
-      case 'popular':
-        result.sort((a, b) => b.views - a.views);
-        break;
-    }
-
-    setFilteredListings(result);
-  };
+  }, [filters, sortBy]);
 
   const handleFilterChange = (newFilters: Partial<FilterState>) => {
     setFilters(prev => ({ ...prev, ...newFilters }));

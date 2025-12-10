@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 export default function VideoSection() {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [videoUrl] = useState('https://www.youtube.com/embed/u7PDe0B4bB4?autoplay=1&rel=0');
+  const [videoUrl] = useState('https://www.youtube.com/embed/Iu0a3H8nAT0?autoplay=1&rel=0');
 
   // Video URL'i buraya eklenecek (YouTube, Vimeo, vb.)
   const embedUrl = videoUrl || '';
