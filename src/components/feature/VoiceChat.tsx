@@ -169,11 +169,28 @@ export default function VoiceChat({
     if (!synthRef.current || !isEnabled) return;
 
     // Clean text for voice (remove emojis, URLs, and technical content)
-    const cleanText = text
-      // Format Turkish phone numbers for voice (e.g., +905412879705 → 0 5 4 1, 2 8 7, 9 7 0 5)
-      .replace(/\+90(\d{3})(\d{3})(\d{2})(\d{2})/g, (_, p1, p2, p3, p4) => {
-        return `0 ${p1.split('').join(' ')}, ${p2.split('').join(' ')}, ${p3} ${p4}`;
-      })
+    let cleanText = text;
+    
+    // Format Turkish phone numbers for voice (multiple formats)
+    // +905412879705 → "sıfır beş dört bir, iki sekiz yedi, doksan yedi sıfır beş"
+    cleanText = cleanText.replace(/\+90(\d{3})(\d{3})(\d{4})/g, (match, p1, p2, p3) => {
+      const digits = ['sıfır', 'bir', 'iki', 'üç', 'dört', 'beş', 'altı', 'yedi', 'sekiz', 'dokuz'];
+      const part1 = p1.split('').map(d => digits[parseInt(d)]).join(' ');
+      const part2 = p2.split('').map(d => digits[parseInt(d)]).join(' ');
+      const part3 = p3.split('').map(d => digits[parseInt(d)]).join(' ');
+      return `${part1}, ${part2}, ${part3}`;
+    });
+    
+    // Also format phone without +90
+    cleanText = cleanText.replace(/\b0(\d{3})(\d{3})(\d{4})\b/g, (match, p1, p2, p3) => {
+      const digits = ['sıfır', 'bir', 'iki', 'üç', 'dört', 'beş', 'altı', 'yedi', 'sekiz', 'dokuz'];
+      const part1 = p1.split('').map(d => digits[parseInt(d)]).join(' ');
+      const part2 = p2.split('').map(d => digits[parseInt(d)]).join(' ');
+      const part3 = p3.split('').map(d => digits[parseInt(d)]).join(' ');
+      return `${part1}, ${part2}, ${part3}`;
+    });
+    
+    cleanText = cleanText
       // Remove only URL lines (not following text)
       .replace(/^https?:\/\/[^\s]+$/gm, '')
       // Remove "Fotoğraflar:" label only, keep following text
