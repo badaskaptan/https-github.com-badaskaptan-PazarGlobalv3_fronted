@@ -73,22 +73,29 @@ export default function VoiceChat({
     // Load available voices
     const loadVoices = () => {
       const availableVoices = synthRef.current?.getVoices() || [];
-      console.log('Available voices:', availableVoices);
+      console.log('🎤 Available voices:', availableVoices.length, 'voices loaded');
+      console.log('🎤 Turkish voices:', availableVoices.filter(v => v.lang.startsWith('tr')).length);
       
       // Filter Turkish voices or fallback to all voices
       const turkishVoices = availableVoices.filter(v => v.lang.startsWith('tr'));
       const voicesToUse = turkishVoices.length > 0 ? turkishVoices : availableVoices;
       
+      console.log('🎤 Using', voicesToUse.length, 'voices for selection');
       setVoices(voicesToUse);
       
       // Auto-select first Turkish voice or first available
       if (voicesToUse.length > 0 && !selectedVoice) {
-        setSelectedVoice(voicesToUse[0]);
+        const defaultVoice = voicesToUse[0];
+        setSelectedVoice(defaultVoice);
+        console.log('🎤 Default voice selected:', defaultVoice.name);
       }
     };
 
-    // Voices might not be loaded immediately
+    // Voices might not be loaded immediately - try multiple times
     loadVoices();
+    setTimeout(loadVoices, 100); // Try again after 100ms
+    setTimeout(loadVoices, 500); // Try again after 500ms
+    
     if (synthRef.current) {
       synthRef.current.onvoiceschanged = loadVoices;
     }
@@ -250,28 +257,34 @@ export default function VoiceChat({
 
   return (
     <div className="voice-chat-container relative flex items-center gap-2">
-      {/* Voice Selection Button */}
-      {voices.length > 0 && (
-        <div className="relative">
-          <motion.button
-            onClick={() => setShowVoiceMenu(!showVoiceMenu)}
-            title="Ses Seçimi"
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <i className="ri-user-voice-line text-lg text-white/80" />
-          </motion.button>
+      {/* Voice Selection Button - Always show */}
+      <div className="relative">
+        <motion.button
+          onClick={() => setShowVoiceMenu(!showVoiceMenu)}
+          title={voices.length > 0 ? "Ses Seçimi" : "Sesler yükleniyor..."}
+          className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all"
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <i className="ri-user-voice-line text-lg text-white/80" />
+        </motion.button>
 
-          {/* Voice Selection Menu */}
-          {showVoiceMenu && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="absolute bottom-12 left-0 bg-gray-800 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto z-[9999]"
-            >
-              <div className="text-xs text-gray-400 px-2 py-1 font-semibold">Ses Seçin:</div>
-              {voices.map((voice, index) => {
+        {/* Voice Selection Menu */}
+        {showVoiceMenu && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="absolute bottom-12 left-0 bg-gray-800 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto z-[9999]"
+          >
+            <div className="text-xs text-gray-400 px-2 py-1 font-semibold">
+              Ses Seçin: {voices.length > 0 ? `(${voices.length} ses)` : 'Yükleniyor...'}
+            </div>
+            {voices.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-gray-400">
+                Sesler yükleniyor... Lütfen bekleyin.
+              </div>
+            ) : (
+              voices.map((voice, index) => {
                 const isFemale = voice.name.toLowerCase().includes('female') || 
                                 voice.name.toLowerCase().includes('kadın') ||
                                 voice.name.toLowerCase().includes('woman');
@@ -293,11 +306,11 @@ export default function VoiceChat({
                     {voice.name}
                   </button>
                 );
-              })}
-            </motion.div>
-          )}
-        </div>
-      )}
+              })
+            )}
+          </motion.div>
+        )}
+      </div>
 
       {/* Microphone Button */}
       <motion.button
