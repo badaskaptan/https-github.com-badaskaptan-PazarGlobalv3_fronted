@@ -837,7 +837,13 @@ export default function ChatBox() {
                           : 'bg-white text-gray-800 shadow-md'
                       }`}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{message.content}</p>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                        {message.content
+                          .replace(/Fotoğraflar:\s*https?:\/\/[^\s]+/g, '')
+                          .replace(/https?:\/\/[^\s]+/g, '')
+                          .replace(/\n{3,}/g, '\n\n')
+                          .trim()}
+                      </p>
                     </div>
 
                     {/* Listing Cards */}

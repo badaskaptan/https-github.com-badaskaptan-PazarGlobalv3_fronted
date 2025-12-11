@@ -170,12 +170,16 @@ export default function VoiceChat({
 
     // Clean text for voice (remove emojis, URLs, and technical content)
     const cleanText = text
-      // Remove entire lines containing only URLs
-      .replace(/^https?:\/\/.*$/gm, '')
-      // Remove remaining URLs inline
+      // Format Turkish phone numbers for voice (e.g., +905412879705 → 0 5 4 1, 2 8 7, 9 7 0 5)
+      .replace(/\+90(\d{3})(\d{3})(\d{2})(\d{2})/g, (_, p1, p2, p3, p4) => {
+        return `0 ${p1.split('').join(' ')}, ${p2.split('').join(' ')}, ${p3} ${p4}`;
+      })
+      // Remove only URL lines (not following text)
+      .replace(/^https?:\/\/[^\s]+$/gm, '')
+      // Remove "Fotoğraflar:" label only, keep following text
+      .replace(/Fotoğraflar:\s*/g, '')
+      // Remove remaining inline URLs
       .replace(/https?:\/\/[^\s]+/g, '')
-      // Remove "Fotoğraflar:" section completely
-      .replace(/Fotoğraflar:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '')
       // Remove emojis
       .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
       .replace(/[\u{2600}-\u{27BF}]/gu, '')
