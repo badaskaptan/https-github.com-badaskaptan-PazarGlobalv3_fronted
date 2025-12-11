@@ -168,12 +168,25 @@ export default function VoiceChat({
   const speak = useCallback((text: string) => {
     if (!synthRef.current || !isEnabled) return;
 
-    // Quick emoji removal (optimized regex)
+    // Clean text for voice (remove emojis, URLs, and technical content)
     const cleanText = text
-      .replace(/[\u{1F000}-\u{1FFFF}]/gu, '') // All emojis in one pass
-      .replace(/[\u{2600}-\u{27BF}]/gu, '')   // Misc symbols
-      .replace(/[\u{FE0F}\u{200D}]/gu, '')    // Variation Selectors
-      .replace(/\s+/g, ' ')                    // Clean up spaces
+      // Remove entire lines containing only URLs
+      .replace(/^https?:\/\/.*$/gm, '')
+      // Remove remaining URLs inline
+      .replace(/https?:\/\/[^\s]+/g, '')
+      // Remove "Fotoğraflar:" section completely
+      .replace(/Fotoğraflar:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '')
+      // Remove emojis
+      .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
+      .replace(/[\u{2600}-\u{27BF}]/gu, '')
+      .replace(/[\u{FE0F}\u{200D}]/gu, '')
+      // Remove number emojis (1️⃣, 2️⃣, etc.)
+      .replace(/[\u{0030}-\u{0039}\u{FE0F}\u{20E3}]/gu, '')
+      // Simplify repeated listing titles in cards
+      .replace(/^"([^"]+)"\s*$/gm, '')
+      // Clean up multiple spaces and newlines
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/\s+/g, ' ')
       .trim();
 
     if (!cleanText) return;
