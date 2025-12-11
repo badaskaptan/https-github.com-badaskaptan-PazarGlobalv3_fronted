@@ -5,12 +5,14 @@ interface VoiceChatProps {
   onTranscriptReady: (text: string) => void;
   onResponseReceived?: (text: string) => void;
   isEnabled?: boolean;
+  selectedVoice?: SpeechSynthesisVoice | null;
 }
 
 export default function VoiceChat({
   onTranscriptReady,
   onResponseReceived,
-  isEnabled = true
+  isEnabled = true,
+  selectedVoice: externalSelectedVoice = null
 }: VoiceChatProps) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -18,9 +20,10 @@ export default function VoiceChat({
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
-  const [showVoiceMenu, setShowVoiceMenu] = useState(false);
+  const [internalSelectedVoice, setInternalSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
+  
+  // Use external voice if provided, otherwise use internal
+  const selectedVoice = externalSelectedVoice || internalSelectedVoice;
 
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
@@ -69,35 +72,22 @@ export default function VoiceChat({
 
     // Initialize Speech Synthesis
     synthRef.current = window.speechSynthesis;
-
-    // Load available voices
-    const loadVoices = () => {
-      const availableVoices = synthRef.current?.getVoices() || [];
-      console.log('🎤 Available voices:', availableVoices.length, 'voices loaded');
-      console.log('🎤 Turkish voices:', availableVoices.filter(v => v.lang.startsWith('tr')).length);
-      
-      // Filter Turkish voices or fallback to all voices
-      const turkishVoices = availableVoices.filter(v => v.lang.startsWith('tr'));
-      const voicesToUse = turkishVoices.length > 0 ? turkishVoices : availableVoices;
-      
-      console.log('🎤 Using', voicesToUse.length, 'voices for selection');
-      setVoices(voicesToUse);
-      
-      // Auto-select first Turkish voice or first available
-      if (voicesToUse.length > 0 && !selectedVoice) {
-        const defaultVoice = voicesToUse[0];
-        setSelectedVoice(defaultVoice);
-        console.log('🎤 Default voice selected:', defaultVoice.name);
-      }
-    };
-
-    // Voices might not be loaded immediately - try multiple times
-    loadVoices();
-    setTimeout(loadVoices, 100); // Try again after 100ms
-    setTimeout(loadVoices, 500); // Try again after 500ms
     
-    if (synthRef.current) {
-      synthRef.current.onvoiceschanged = loadVoices;
+    // Auto-select default voice if not provided externally
+    if (!externalSelectedVoice) {
+      const loadDefaultVoice = () => {
+        const availableVoices = synthRef.current?.getVoices() || [];
+        const turkishVoices = availableVoices.filter(v => v.lang.startsWith('tr'));
+        if (turkishVoices.length > 0 && !internalSelectedVoice) {
+          setInternalSelectedVoice(turkishVoices[0]);
+          console.log('🎤 Default voice selected:', turkishVoices[0].name);
+        }
+      };
+      loadDefaultVoice();
+      setTimeout(loadDefaultVoice, 100);
+      if (synthRef.current) {
+        synthRef.current.onvoiceschanged = loadDefaultVoice;
+      }
     }
 
     return () => {
@@ -257,61 +247,6 @@ export default function VoiceChat({
 
   return (
     <div className="voice-chat-container relative flex items-center gap-2">
-      {/* Voice Selection Button - Always show */}
-      <div className="relative">
-        <motion.button
-          onClick={() => setShowVoiceMenu(!showVoiceMenu)}
-          title={voices.length > 0 ? "Ses Seçimi" : "Sesler yükleniyor..."}
-          className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <i className="ri-user-voice-line text-lg text-white/80" />
-        </motion.button>
-
-        {/* Voice Selection Menu */}
-        {showVoiceMenu && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="absolute bottom-12 left-0 bg-gray-800 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[300px] overflow-y-auto z-[9999]"
-          >
-            <div className="text-xs text-gray-400 px-2 py-1 font-semibold">
-              Ses Seçin: {voices.length > 0 ? `(${voices.length} ses)` : 'Yükleniyor...'}
-            </div>
-            {voices.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-gray-400">
-                Sesler yükleniyor... Lütfen bekleyin.
-              </div>
-            ) : (
-              voices.map((voice, index) => {
-                const isFemale = voice.name.toLowerCase().includes('female') || 
-                                voice.name.toLowerCase().includes('kadın') ||
-                                voice.name.toLowerCase().includes('woman');
-                const icon = isFemale ? '♀️' : '♂️';
-                
-                return (
-                  <button
-                    key={index}
-                    onClick={() => {
-                      setSelectedVoice(voice);
-                      setShowVoiceMenu(false);
-                      console.log('🎤 Voice selected:', voice.name);
-                    }}
-                    className={`w-full text-left px-3 py-2 rounded hover:bg-white/10 transition-all text-sm ${
-                      selectedVoice?.name === voice.name ? 'bg-purple-500/30 text-white' : 'text-gray-300'
-                    }`}
-                  >
-                    <span className="mr-2">{icon}</span>
-                    {voice.name}
-                  </button>
-                );
-              })
-            )}
-          </motion.div>
-        )}
-      </div>
-
       {/* Microphone Button */}
       <motion.button
         onClick={isListening ? stopListening : startListening}

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import VoiceChat from './VoiceChat';
+import VoiceSelector from './VoiceSelector';
 
 type Message = {
   id: string;
@@ -124,6 +125,7 @@ export default function ChatBox() {
   const [error, setError] = useState<string | null>(null);
   const [displayCount, setDisplayCount] = useState(3);
   const [voiceMode, setVoiceMode] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMessageRef = useRef<string>('');
@@ -748,6 +750,14 @@ export default function ChatBox() {
                 </div>
               </div>
               <div className="flex items-center space-x-2">
+                {/* Voice Selector - Shows when voice mode is enabled */}
+                {voiceMode && (
+                  <VoiceSelector
+                    selectedVoice={selectedVoice}
+                    onVoiceSelect={setSelectedVoice}
+                  />
+                )}
+                
                 <button
                   onClick={toggleVoiceMode}
                   title={voiceMode ? "Sesli Modu Kapat" : "Sesli Modu Aç"}
@@ -952,6 +962,7 @@ export default function ChatBox() {
                     <VoiceChat
                       onTranscriptReady={handleVoiceTranscript}
                       isEnabled={voiceMode}
+                      selectedVoice={selectedVoice}
                     />
                   </div>
                 )}
