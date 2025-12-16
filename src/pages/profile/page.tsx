@@ -9,6 +9,7 @@ export default function ProfilePage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [resettingPin, setResettingPin] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
@@ -133,26 +134,18 @@ export default function ProfilePage() {
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const pinHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-      // User Security tablosuna kaydet
-      const { error: securityError } = await supabase
-        .from('user_security')
-        .upsert({
-          user_id: user.id,
-          phone: securityData.phone,
-          pin_hash: pinHash,
-          failed_attempts: 0,
-          is_locked: false,
+      // RPC ile kaydet (duplicate phone gibi durumları DB tarafında güvenli şekilde çözer)
+      const { data: rpcData, error: rpcError } = await supabase
+        .rpc('register_user_pin', {
+          p_user_id: user.id,
+          p_phone: securityData.phone,
+          p_pin_hash: pinHash,
         });
 
-      if (securityError) throw securityError;
-
-      // Profilde telefon numarasını güncelle
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ phone: securityData.phone })
-        .eq('id', user.id);
-
-      if (profileError) throw profileError;
+      if (rpcError) throw rpcError;
+      if (Array.isArray(rpcData) && rpcData.length > 0 && rpcData[0]?.success === false) {
+        throw new Error(rpcData[0]?.message || 'Güvenlik ayarları kaydedilirken hata oluştu');
+      }
 
       setSuccess('WhatsApp güvenlik ayarları kaydedildi!');
       setHasWhatsAppSecurity(true);
@@ -161,6 +154,30 @@ export default function ProfilePage() {
       setError(err.message || 'Güvenlik ayarları kaydedilirken hata oluştu');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleWhatsAppPinReset = async () => {
+    setError('');
+    setSuccess('');
+    setResettingPin(true);
+
+    try {
+      const { data: rpcData, error: rpcError } = await supabase
+        .rpc('reset_user_pin', { p_user_id: user.id });
+
+      if (rpcError) throw rpcError;
+      if (Array.isArray(rpcData) && rpcData.length > 0 && rpcData[0]?.success === false) {
+        throw new Error(rpcData[0]?.message || 'PIN sıfırlanırken hata oluştu');
+      }
+
+      setHasWhatsAppSecurity(false);
+      setSecurityData({ phone: '', pin: '', confirmPin: '' });
+      setSuccess('PIN sıfırlandı. Yeni PIN oluşturabilirsiniz.');
+    } catch (err: any) {
+      setError(err.message || 'PIN sıfırlanırken hata oluştu');
+    } finally {
+      setResettingPin(false);
     }
   };
 
@@ -293,12 +310,23 @@ export default function ProfilePage() {
                 <p className="text-sm text-gray-600 mb-6">
                   Hesabınız WhatsApp ile korunuyor
                 </p>
-                <button
-                  onClick={() => setHasWhatsAppSecurity(false)}
-                  className="text-sm text-teal-600 hover:text-teal-700 font-semibold cursor-pointer"
-                >
-                  Ayarları Değiştir
-                </button>
+                <div className="flex flex-col gap-3 items-center">
+                  <button
+                    onClick={() => setHasWhatsAppSecurity(false)}
+                    className="text-sm text-teal-600 hover:text-teal-700 font-semibold cursor-pointer"
+                    disabled={saving || resettingPin}
+                  >
+                    Ayarları Değiştir
+                  </button>
+
+                  <button
+                    onClick={handleWhatsAppPinReset}
+                    className="text-sm text-red-600 hover:text-red-700 font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={saving || resettingPin}
+                  >
+                    {resettingPin ? 'PIN sıfırlanıyor...' : 'PIN\'i Sıfırla'}
+                  </button>
+                </div>
               </div>
             ) : (
               <form onSubmit={handleWhatsAppSecuritySetup} className="space-y-6">

@@ -137,8 +137,22 @@ export default function ChatBox() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMessageRef = useRef<string>('');
   const conversationHistory = useRef<Array<{ role: string; content: string }>>([]);
+  const pendingMediaPathsRef = useRef<string[]>([]);
 
   const AGENT_BACKEND_URL = 'https://pazarglobal-agent-backend-production-4ec8.up.railway.app';
+
+  const dedupePaths = (paths: string[]) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const p of paths) {
+      const sp = (p || '').toString().trim();
+      if (!sp) continue;
+      if (seen.has(sp)) continue;
+      seen.add(sp);
+      out.push(sp);
+    }
+    return out;
+  };
 
   const resolveUserIdPath = (id: string) => id?.replace(/[^a-zA-Z0-9_-]/g, '') || 'web-user';
 
@@ -200,6 +214,16 @@ export default function ChatBox() {
     });
 
     try {
+      // Only send media_paths on the upload message itself.
+      // For subsequent messages, we persist safe media via a hidden [SYSTEM_MEDIA_NOTE] in conversationHistory.
+      const media_paths = dedupePaths(options?.mediaPaths || []);
+
+      // DEBUG: Log what we're sending to backend
+      if (media_paths.length > 0) {
+        console.log('🖼️  Sending media_paths to backend:', media_paths);
+        console.log('🖼️  Sending media_type to backend:', options?.mediaType);
+      }
+      
       const response = await fetch(`${AGENT_BACKEND_URL}/web-chat`, {
         method: 'POST',
         headers: {
@@ -210,7 +234,7 @@ export default function ChatBox() {
           user_id: resolvedUserId,
           conversation_history: conversationHistory.current,
           user_context: userContext,
-          media_paths: options?.mediaPaths,
+          media_paths: media_paths.length > 0 ? media_paths : undefined,
           media_type: options?.mediaType,
         }),
       });
@@ -254,6 +278,17 @@ export default function ChatBox() {
               role: 'assistant',
               content: cleanContent
             });
+          }
+
+          // Heuristic: after publish/cancel flows, clear pending images
+          if (cleanContent) {
+            const lc = cleanContent.toLowerCase();
+            if (lc.includes('ilan yayınlandı') || lc.includes('✅ ilan yayınlandı')) {
+              pendingMediaPathsRef.current = [];
+            }
+            if (lc.includes('iptal edildi') || lc.startsWith('iptal') || lc.includes('işlemi iptal')) {
+              pendingMediaPathsRef.current = [];
+            }
           }
 
           // Update message with parsed data
@@ -318,6 +353,28 @@ export default function ChatBox() {
               } else if (data.type === 'done') {
                 // Streaming complete
                 setIsTyping(false);
+              } else if (data.type === 'meta') {
+                // Persist safe images so user doesn't need to repeat "az önceki fotoğraf"
+                const safe = Array.isArray(data.safe_media_paths) ? (data.safe_media_paths as string[]) : [];
+                const blocked = Array.isArray(data.blocked_media_paths) ? data.blocked_media_paths : [];
+                const blockedPaths = blocked
+                  .map((b: any) => (b && typeof b === 'object' ? b.path : null))
+                  .filter(Boolean) as string[];
+
+                const nextPending = dedupePaths([
+                  ...(pendingMediaPathsRef.current || []),
+                  ...safe,
+                ]).filter(p => !blockedPaths.includes(p));
+
+                pendingMediaPathsRef.current = nextPending;
+
+                // Also inject a hidden system note into conversation history so backend agents can use images
+                // without re-sending media_paths (avoids repeated vision safety checks).
+                const mediaNote = `[SYSTEM_MEDIA_NOTE] MEDIA_PATHS=${JSON.stringify(nextPending)}`;
+                const last = conversationHistory.current[conversationHistory.current.length - 1];
+                if (!last || last.role !== 'assistant' || last.content !== mediaNote) {
+                  conversationHistory.current.push({ role: 'assistant', content: mediaNote });
+                }
               } else if (data.type === 'error') {
                 throw new Error(data.content || 'Backend hatası oluştu');
               }
@@ -367,6 +424,10 @@ export default function ChatBox() {
     setMessages((prev) => [...prev, newMessage]);
     const messageToSend = inputValue;
     setInputValue('');
+
+    if (messageToSend.toLowerCase().trim().startsWith('iptal')) {
+      pendingMediaPathsRef.current = [];
+    }
     
     // Send to agent backend
     sendMessageToAgent(messageToSend);
@@ -400,138 +461,85 @@ export default function ChatBox() {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const fileSizeMB = file.size / (1024 * 1024);
+    const files = Array.from(e.target.files || []);
+    // allow selecting the same file again
+    e.target.value = '';
 
-      // Dosya tipi kontrolü
-      if (file.type.startsWith('image/')) {
-        const handleUpload = async (uploadFile: File) => {
-          const resolvedUserId = customUser?.id || user?.id || localStorage.getItem('user_id') || getUserId();
+    if (files.length === 0) return;
+
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        type: 'ai',
+        content: '⚠️ Lütfen sadece fotoğraf yükleyin.',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+      return;
+    }
+
+    const run = async () => {
+      const resolvedUserId = customUser?.id || user?.id || localStorage.getItem('user_id') || getUserId();
+      const uploadedPaths: string[] = [];
+
+      setIsTyping(true);
+      try {
+        for (const file of imageFiles) {
           try {
-            setIsTyping(true);
+            const fileSizeMB = file.size / (1024 * 1024);
+            let uploadFile = file;
+            if (fileSizeMB > 0.9) {
+              uploadFile = await compressImage(file, 0.9);
+            }
+
             const { storagePath, publicUrl } = await uploadImageToSupabase(uploadFile, resolvedUserId);
+            uploadedPaths.push(storagePath);
 
             const uploadedMessage: Message = {
-              id: Date.now().toString(),
+              id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
               type: 'user',
-              content: `📷 ${uploadFile.name} yüklendi (${(uploadFile.size / (1024 * 1024)).toFixed(2)} MB)`,
+              content: `📷 ${file.name} yüklendi (${(uploadFile.size / (1024 * 1024)).toFixed(2)} MB)`,
               timestamp: new Date(),
             };
             setMessages((prev) => [...prev, uploadedMessage]);
 
-            // Send note to agent with media_paths
-            sendMessageToAgent(`Fotoğraf yükledim: ${uploadFile.name}`, {
-              mediaPaths: [storagePath],
-              mediaType: uploadFile.type,
-            });
-
-            // Ek bilgilendirme mesajı (optional)
-            const infoMessage: Message = {
-              id: (Date.now() + 2).toString(),
-              type: 'ai',
-              content: '📥 Görsel yüklendi, ürün analizi başlatılıyor...',
-              timestamp: new Date(),
-            };
-            setMessages((prev) => [...prev, infoMessage]);
+            console.log('📸 Uploading image - storagePath:', storagePath, 'publicUrl:', publicUrl);
           } catch (uploadErr: any) {
             console.error('Upload error:', uploadErr);
             const errorMessage: Message = {
-              id: (Date.now() + 3).toString(),
+              id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
               type: 'ai',
               content: `⚠️ Görsel yüklenemedi: ${uploadErr?.message || 'Bilinmeyen hata'}`,
               timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorMessage]);
-          } finally {
-            setIsTyping(false);
           }
-        };
-
-        // Resim sıkıştırma
-        if (fileSizeMB > 0.9) {
-          setIsTyping(true);
-          const userMessage: Message = {
-            id: Date.now().toString(),
-            type: 'user',
-            content: `📷 ${file.name} işleniyor...`,
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, userMessage]);
-
-          compressImage(file, 0.9)
-            .then((compressedFile) => {
-              const compressedSizeMB = (compressedFile.size / (1024 * 1024)).toFixed(2);
-              const updatedMessage: Message = {
-                id: Date.now().toString(),
-                type: 'user',
-                content: `📷 ${file.name} yüklendi (${compressedSizeMB} MB)`,
-                timestamp: new Date(),
-              };
-              setMessages((prev) => {
-                const filtered = prev.filter(m => m.id !== userMessage.id);
-                return [...filtered, updatedMessage];
-              });
-
-              handleUpload(compressedFile);
-            })
-            .catch((error) => {
-              console.error('Resim sıkıştırma hatası:', error);
-              const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                type: 'ai',
-                content: '⚠️ Resim işlenirken bir hata oluştu. Lütfen tekrar deneyin.',
-                timestamp: new Date(),
-              };
-              setMessages((prev) => [...prev, errorMessage]);
-              setIsTyping(false);
-            });
-        } else {
-          handleUpload(file);
         }
-      } else if (file.type.startsWith('video/')) {
-        // Video boyut kontrolü (max 5 MB)
-        if (fileSizeMB > 5) {
-          const errorMessage: Message = {
-            id: Date.now().toString(),
-            type: 'ai',
-            content: `⚠️ ${file.name} çok büyük! Videolar maksimum 5 MB olmalıdır. (Mevcut: ${fileSizeMB.toFixed(2)} MB)`,
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, errorMessage]);
-          return;
-        }
-
-        const newMessage: Message = {
-          id: Date.now().toString(),
-          type: 'user',
-          content: `🎥 ${file.name} yüklendi (${fileSizeMB.toFixed(2)} MB)`,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, newMessage]);
-
-        // TODO: Implement video upload to agent backend
-        setIsTyping(true);
-        setTimeout(() => {
-          const aiResponse: Message = {
-            id: (Date.now() + 1).toString(),
-            type: 'ai',
-            content: 'Video yükleme özelliği yakında aktif olacak!',
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, aiResponse]);
-          setIsTyping(false);
-        }, 1500);
-      } else {
-        const errorMessage: Message = {
-          id: Date.now().toString(),
-          type: 'ai',
-          content: '⚠️ Sadece resim ve video dosyaları yükleyebilirsiniz.',
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, errorMessage]);
+      } finally {
+        setIsTyping(false);
       }
-    }
+
+      const uniquePaths = dedupePaths(uploadedPaths);
+      if (uniquePaths.length > 0) {
+        sendMessageToAgent(`Fotoğraf yükledim (${uniquePaths.length} adet)`, {
+          mediaPaths: uniquePaths,
+          mediaType: 'image',
+        });
+
+        const infoMessage: Message = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          type: 'ai',
+          content: '📥 Görsel(ler) yüklendi, ürün analizi başlatılıyor...',
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, infoMessage]);
+      }
+    };
+
+    run();
+
+    // Note: video support removed here; this input only accepts images
   };
 
   const toggleVoiceMode = () => {
@@ -968,6 +976,7 @@ export default function ChatBox() {
                   ref={fileInputRef}
                   onChange={handleFileChange}
                   accept="image/*"
+                  multiple
                   className="hidden"
                   aria-label="Fotoğraf seç"
                 />

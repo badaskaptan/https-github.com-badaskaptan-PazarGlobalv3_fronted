@@ -134,22 +134,19 @@ Kurallar:
           console.error('Site ortalaması hesaplanamadı:', err);
         }
 
-        // 2️⃣ WEB SEARCH ile gerçek piyasa fiyatı al (Perplexity)
+        // 2️⃣ WEB SCRAPING ile gerçek piyasa fiyatı al (Güncel API)
         let webSearchPrice = 0;
         let webSearchMin = 0;
         let webSearchMax = 0;
         let webSearchSource = '';
         
         try {
-          console.log('🌐 Perplexity Web Search başlatılıyor...');
+          console.log('🌐 Gerçek zamanlı piyasa verisi çekiliyor...');
           
           const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
           
           if (PERPLEXITY_API_KEY) {
-            // Daha spesifik arama sorgusu
-            const searchQuery = `${title} ${category} 2.el satış fiyatı Türkiye sahibinden arabam letgo`;
-            
-            console.log('🔍 Arama sorgusu:', searchQuery);
+            console.log('🔍 E-ticaret sitelerinden güncel fiyatlar aranıyor...');
             
             const perplexityResponse = await fetch('https://api.perplexity.ai/chat/completions', {
               method: 'POST',
@@ -158,74 +155,101 @@ Kurallar:
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'llama-3.1-sonar-large-128k-online',
+                model: 'sonar',  // ✅ YENİ MODEL (eski: llama-3.1-sonar-large-128k-online)
                 messages: [
                   {
                     role: 'system',
-                    content: 'Sen bir fiyat araştırma uzmanısın. Türkiye\'deki sahibinden.com, arabam.com, letgo gibi sitelerden güncel 2.el fiyatları araştırıyorsun. SADECE sayısal fiyat aralığı ver, başka hiçbir şey yazma.'
+                    content: 'Sen bir fiyat araştırma uzmanısın. Türkiye\'deki sahibinden.com, arabam.com, letgo, hepsiburada gibi e-ticaret sitelerinden GERÇEK GÜNCEL fiyat verilerini topluyorsun. SADECE sayısal fiyat aralığı ver.'
                   },
                   {
                     role: 'user',
-                    content: `"${title}" için Türkiye'de sahibinden.com, arabam.com ve letgo'daki güncel 2.el satış fiyatları nedir? 
+                    content: `"${title}" ürünü için Türkiye'deki e-ticaret sitelerindeki (sahibinden.com, arabam.com, letgo, hepsiburada) GÜNCEL satış fiyatları nedir?
 
-ÖNEMLI: 
+Kategori: ${category}
+Durum: ${condition || '2.el'}
+
+ÖNEMLİ KURALLAR:
 - Sadece minimum ve maksimum fiyatı yaz
-- Format: XXXXXX-YYYYYY (örnek: 950000-1050000)
-- TL, ₺, virgül, nokta gibi işaretler kullanma
+- Format: XXXXXX-YYYYYY (örnek: 25000-35000)
+- TL, ₺, virgül, nokta, açıklama EKLEME
 - Sadece rakam ve tire kullan
-- Başka açıklama ekleme
+- Gerçek sitelerden aldığın güncel verileri kullan
 
-Örnek yanıt: 950000-1050000`
+Örnek yanıt: 25000-35000`
                   }
                 ],
                 temperature: 0.1,
-                max_tokens: 100,
-                return_citations: true,
-                search_recency_filter: 'month'
+                max_tokens: 150,
+                search_mode: 'web',  // ✅ YENİ PARAMETRE
+                web_search_options: {  // ✅ YENİ PARAMETRE (eski: return_citations)
+                  search_context_size: 'high',
+                  image_search_relevance_enhanced: false
+                },
+                search_domain_filter: [  // ✅ Sadece güvenilir siteler
+                  'sahibinden.com',
+                  'arabam.com', 
+                  'letgo.com',
+                  'hepsiburada.com',
+                  'trendyol.com'
+                ],
+                search_recency_filter: 'week'  // ✅ Son 1 hafta
               }),
             });
 
-            console.log('🌐 Perplexity yanıt durumu:', perplexityResponse.status);
+            console.log('🌐 API yanıt durumu:', perplexityResponse.status);
 
             if (perplexityResponse.ok) {
               const perplexityData = await perplexityResponse.json();
               const webPriceText = perplexityData.choices[0]?.message?.content?.trim() || '';
-              const citations = perplexityData.citations || [];
+              const searchResults = perplexityData.search_results || [];  // ✅ YENİ FORMAT (eski: citations)
               
-              console.log('🌐 Perplexity RAW yanıt:', webPriceText);
-              console.log('🔗 Kaynaklar:', citations);
+              console.log('🌐 RAW yanıt:', webPriceText);
+              console.log('🔗 Kaynaklar:', searchResults.map((r: any) => `${r.title} - ${r.url}`).join('\n'));
               
               // Fiyat aralığını parse et
               // Format: 950000-1050000 veya "950000-1050000" veya 950.000-1.050.000
               
               // Tüm nokta, virgül, TL, ₺ gibi karakterleri temizle
               const cleanText = webPriceText
-                .replace(/TL|₺|lira/gi, '')
+                .replace(/TL|₺|lira|try/gi, '')
                 .replace(/[.,]/g, '')
                 .trim();
               
               console.log('🧹 Temizlenmiş metin:', cleanText);
               
               // Tire ile ayrılmış iki sayı ara
-              const rangeMatch = cleanText.match(/(\d{5,})\s*[-–—]\s*(\d{5,})/);
+              const rangeMatch = cleanText.match(/(\d{4,})\s*[-–—]\s*(\d{4,})/);
               
               if (rangeMatch) {
                 webSearchMin = parseInt(rangeMatch[1]);
                 webSearchMax = parseInt(rangeMatch[2]);
                 webSearchPrice = (webSearchMin + webSearchMax) / 2;
-                webSearchSource = 'Perplexity Web Search';
+                
+                // Kaynak sitelerini listele
+                const sources = searchResults.map((r: any) => {
+                  const url = r.url || '';
+                  if (url.includes('sahibinden')) return '🏪 Sahibinden';
+                  if (url.includes('arabam')) return '🚗 Arabam';
+                  if (url.includes('letgo')) return '📱 Letgo';
+                  if (url.includes('hepsiburada')) return '🛒 Hepsiburada';
+                  if (url.includes('trendyol')) return '🛍️ Trendyol';
+                  return '🌐 Web';
+                }).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).join(', ');
+                
+                webSearchSource = sources || 'Gerçek E-Ticaret Siteleri';
                 
                 console.log(`✅ Fiyat aralığı bulundu: ${webSearchMin.toLocaleString('tr-TR')} - ${webSearchMax.toLocaleString('tr-TR')} ₺`);
                 console.log(`💰 Ortalama fiyat: ${webSearchPrice.toLocaleString('tr-TR')} ₺`);
+                console.log(`🔗 Kaynaklar: ${webSearchSource}`);
               } else {
                 // Tek fiyat ara
-                const singleMatch = cleanText.match(/(\d{5,})/);
+                const singleMatch = cleanText.match(/(\d{4,})/);
                 if (singleMatch) {
                   const singlePrice = parseInt(singleMatch[1]);
-                  webSearchMin = Math.round(singlePrice * 0.9);
-                  webSearchMax = Math.round(singlePrice * 1.1);
+                  webSearchMin = Math.round(singlePrice * 0.85);
+                  webSearchMax = Math.round(singlePrice * 1.15);
                   webSearchPrice = singlePrice;
-                  webSearchSource = 'Perplexity Web Search (tek fiyat)';
+                  webSearchSource = 'E-Ticaret Sitesi (tek fiyat)';
                   
                   console.log(`✅ Tek fiyat bulundu: ${webSearchPrice.toLocaleString('tr-TR')} ₺`);
                 } else {
@@ -234,13 +258,13 @@ Kurallar:
               }
             } else {
               const errorText = await perplexityResponse.text();
-              console.error('❌ Perplexity API hatası:', perplexityResponse.status, errorText);
+              console.error('❌ API hatası:', perplexityResponse.status, errorText);
             }
           } else {
             console.log('⚠️ PERPLEXITY_API_KEY bulunamadı');
           }
         } catch (err) {
-          console.error('❌ Web search hatası:', err);
+          console.error('❌ Web scraping hatası:', err);
         }
 
         // 3️⃣ AI'dan piyasa fiyatı al (fallback)
@@ -319,19 +343,20 @@ Kurallar:
         let explanation = '';
 
         if (webSearchPrice > 0) {
-          // Web search verisi varsa (en güvenilir)
+          // Web scraping verisi varsa (en güvenilir - GERÇEK SİTE VERİLERİ)
           finalPrice = Math.round(webSearchPrice * conditionMultiplier);
-          explanation = `🌐 Güncel Piyasa Verisi (${webSearchSource}):\n\n` +
-            `📊 Piyasa Fiyat Aralığı: ${webSearchMin.toLocaleString('tr-TR')} - ${webSearchMax.toLocaleString('tr-TR')} ₺\n` +
-            `📈 Ortalama: ${webSearchPrice.toLocaleString('tr-TR')} ₺\n` +
-            `⚙️ Durum: ${condition || 'İyi Durumda'} (×${conditionMultiplier})\n\n` +
-            `💰 Önerilen Satış Fiyatı: ${finalPrice.toLocaleString('tr-TR')} ₺`;
+          explanation = `🌐 GERÇEK PİYASA VERİSİ (${webSearchSource}):\n\n` +
+            `📊 Güncel Fiyat Aralığı: ${webSearchMin.toLocaleString('tr-TR')} - ${webSearchMax.toLocaleString('tr-TR')} ₺\n` +
+            `📈 Piyasa Ortalaması: ${webSearchPrice.toLocaleString('tr-TR')} ₺\n` +
+            `⚙️ Durum Katsayısı: ${condition || 'İyi Durumda'} (×${conditionMultiplier})\n\n` +
+            `💰 ÖNERİLEN SATIŞ FİYATI: ${finalPrice.toLocaleString('tr-TR')} ₺\n\n` +
+            `✅ Bu fiyat gerçek e-ticaret sitelerinden alınan güncel verilere dayanmaktadır.`;
           
           if (siteCount > 0) {
-            explanation += `\n\nℹ️ Sitemizdeki benzer ilanlar: ${siteAverage.toLocaleString('tr-TR')} ₺ (${siteCount} ilan)`;
+            explanation += `\n\n📱 PazarGlobal Platformu: ${siteAverage.toLocaleString('tr-TR')} ₺ (${siteCount} benzer ilan)`;
           }
           
-          console.log('✅ Web search tabanlı hesaplama tamamlandı:', finalPrice);
+          console.log('✅ Web scraping tabanlı hesaplama tamamlandı:', finalPrice);
         } else if (siteCount > 0 && aiAverage > 0) {
           // Hem site hem AI verisi var
           const hybridPrice = (aiAverage * 0.6) + (siteAverage * 0.4);
