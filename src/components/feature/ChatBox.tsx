@@ -30,6 +30,10 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const PUBLIC_BUCKET = 'product-images';
+const AGENT_API_BASE =
+  (import.meta.env as any).VITE_AGENT_API_BASE?.trim() ||
+  (import.meta.env as any).NEXT_PUBLIC_AGENT_API_BASE?.trim() ||
+  '';
 
 // Generate or retrieve unique user ID
 const getUserId = (): string => {
@@ -54,6 +58,19 @@ const parseListings = (content: string): { cleanContent: string; listings: any[]
     }
   }
   return { cleanContent: content, listings: [] };
+};
+
+// Deduplicate path list (keeps order of first occurrence)
+const dedupePaths = (paths: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const p of paths) {
+    if (p && !seen.has(p)) {
+      seen.add(p);
+      result.push(p);
+    }
+  }
+  return result;
 };
 
 // Resim sıkıştırma fonksiyonu
@@ -119,6 +136,53 @@ const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File>
     };
     reader.onerror = () => reject(new Error('Dosya okunamadı'));
   });
+};
+
+// Supabase'e resim yükleme fonksiyonu
+const uploadImageToSupabase = async (file: File, userId: string): Promise<{ storagePath: string; publicUrl: string }> => {
+  const fileExt = file.name.split('.').pop() || 'jpg';
+  const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+  
+  // Kullanıcı telefon numarasını almaya çalış
+  let userPhone = userId;
+  try {
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('phone')
+      .eq('id', userId)
+      .single();
+    
+    if (profileData?.phone) {
+      userPhone = profileData.phone.replace(/\D/g, '');
+    }
+  } catch (err) {
+    console.error('Telefon numarası alınamadı, userId kullanılacak:', err);
+  }
+
+  // Geçici listing ID (gerçek ID agent tarafından oluşturulacak)
+  const tempListingId = `webchat_${Date.now()}`;
+  
+  // Path: userPhone/listing_id/image.jpg
+  const storagePath = `${userPhone}/${tempListingId}/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(PUBLIC_BUCKET)
+    .upload(storagePath, file);
+
+  if (uploadError) {
+    console.error('Supabase upload error:', uploadError);
+    throw new Error(`Resim yüklenemedi: ${uploadError.message}`);
+  }
+
+  // Public URL oluştur
+  const { data: publicUrlData } = supabase.storage
+    .from(PUBLIC_BUCKET)
+    .getPublicUrl(storagePath);
+
+  return {
+    storagePath,
+    publicUrl: publicUrlData.publicUrl
+  };
 };
 
 export default function ChatBox() {
@@ -253,6 +317,37 @@ export default function ChatBox() {
 
   const WEBCHAT_WEBHOOK_URL = import.meta.env.VITE_WEBCHAT_WEBHOOK_URL?.trim();
 
+  // Direct agent API sender (preferred when AGENT_API_BASE is set)
+  const sendMessageToAgentDirect = async (message: string, mediaPaths: string[], resolvedUserId: string) => {
+    if (!AGENT_API_BASE) return false;
+    const endpoint = `${AGENT_API_BASE.replace(/\/$/, '')}/webchat/message`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        session_id: resolvedUserId,
+        message,
+        user_id: resolvedUserId,
+        media_url: mediaPaths[0],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '<failed to read response body>');
+      throw new Error(`Agent hatası (${response.status}): ${errorText || response.statusText || 'Bilinmeyen hata'}`);
+    }
+
+    const json = await response.json();
+    const assistantText = json.message || json.response || '';
+    const listings = json.data?.listings || json.listings;
+    if (assistantText) {
+      commitAssistantResponse(assistantText, undefined, listings);
+    }
+    return true;
+  };
+
   const sendMessageToAgent = async (message: string, options?: { mediaPaths?: string[]; mediaType?: string }) => {
     setIsTyping(true);
     setIsConnecting(true);
@@ -277,6 +372,17 @@ export default function ChatBox() {
     });
 
     const mediaPaths = dedupePaths(options?.mediaPaths || []);
+
+    if (AGENT_API_BASE) {
+      try {
+        await sendMessageToAgentDirect(message, mediaPaths, resolvedUserId);
+        setIsTyping(false);
+        setIsConnecting(false);
+        return;
+      } catch (apiErr) {
+        console.warn('Agent API call failed, falling back to webhook flow:', apiErr);
+      }
+    }
 
     if (mediaPaths.length > 0) {
       console.log('🖼️  Sending media_paths to n8n webhook:', mediaPaths);
@@ -529,8 +635,13 @@ export default function ChatBox() {
       pendingMediaPathsRef.current = [];
     }
     
-    // Send to agent backend
-    sendMessageToAgent(messageToSend);
+    // Send to agent backend (direct agent API if available, else fallback)
+    const mediaPaths: string[] = [];
+    const resolvedUserId = customUser?.id || user?.id || localStorage.getItem('user_id') || getUserId();
+    sendMessageToAgentDirect(messageToSend, mediaPaths, resolvedUserId).catch(() => {
+      // Fallback to legacy webhook flow
+      sendMessageToAgent(messageToSend);
+    });
   };
 
   const handleQuickAction = (action: string) => {
@@ -634,18 +745,17 @@ export default function ChatBox() {
 
       const uniquePaths = dedupePaths(uploadedPaths);
       if (uniquePaths.length > 0) {
-        sendMessageToAgent(`Fotoğraf yükledim (${uniquePaths.length} adet)`, {
-          mediaPaths: uniquePaths,
-          mediaType: 'image',
-        });
-
-        const infoMessage: Message = {
-          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        // Show intent clarification instead of auto-processing
+        const intentQuestion: Message = {
+          id: `${Date.now()}_intent_q`,
           type: 'ai',
-          content: '📥 Görsel(ler) yüklendi, ürün analizi başlatılıyor...',
+          content: `📸 ${uniquePaths.length} fotoğraf başarıyla yüklendi!\n\nBu ürün için ne yapmak istiyorsunuz?\n• 📝 İlan oluşturmak (satmak)\n• 🔍 Benzer ürünleri aramak`,
           timestamp: new Date(),
         };
-        setMessages((prev) => [...prev, infoMessage]);
+        setMessages((prev) => [...prev, intentQuestion]);
+
+        // Store image paths in pending for next user message
+        pendingMediaPathsRef.current = uniquePaths;
       }
     };
 
@@ -1210,11 +1320,7 @@ export default function ChatBox() {
                               >
                                 {isUser ? (
                                   <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                                    {cleanContent
-                                      .replace(/Fotoğraflar:\s*https?:\/\/[^\s]+/g, '')
-                                      .replace(/https?:\/\/[^\s]+/g, '')
-                                      .replace(/\n{3,}/g, '\n\n')
-                                      .trim()}
+                                    {cleanContent.replace(/\n{3,}/g, '\n\n').trim()}
                                   </p>
                                 ) : (
                                   <ReactMarkdown
@@ -1238,13 +1344,16 @@ export default function ChatBox() {
                                           </a>
                                         );
                                       },
+                                      img({ node, src, alt, ...props }) {
+                                        return (
+                                          <div className="my-2">
+                                            <img src={src || ''} alt={alt || ''} className="rounded-lg max-h-64 w-full object-cover" {...props} />
+                                          </div>
+                                        );
+                                      },
                                     }}
                                   >
-                                    {cleanContent
-                                      .replace(/Fotoğraflar:\s*https?:\/\/[^\s]+/g, '')
-                                      .replace(/https?:\/\/[^\s]+/g, '')
-                                      .replace(/\n{3,}/g, '\n\n')
-                                      .trim()}
+                                    {cleanContent.replace(/\n{3,}/g, '\n\n').trim()}
                                   </ReactMarkdown>
                                 )}
                               </div>
@@ -1401,3 +1510,5 @@ export default function ChatBox() {
     </>
   );
 }
+
+
