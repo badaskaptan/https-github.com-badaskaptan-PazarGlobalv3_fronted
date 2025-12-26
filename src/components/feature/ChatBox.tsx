@@ -331,6 +331,7 @@ export default function ChatBox() {
         message,
         user_id: resolvedUserId,
         media_url: mediaPaths[0],
+        media_urls: mediaPaths.length > 0 ? mediaPaths : undefined,
       }),
     });
 
@@ -344,6 +345,9 @@ export default function ChatBox() {
     const listings = json.data?.listings || json.listings;
     if (assistantText) {
       commitAssistantResponse(assistantText, undefined, listings);
+    }
+    if (mediaPaths.length > 0) {
+      pendingMediaPathsRef.current = [];
     }
     return true;
   };
@@ -395,6 +399,7 @@ export default function ChatBox() {
       source: 'pazarglobal-webchat',
       mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
       media_paths: mediaPaths.length > 0 ? mediaPaths : undefined,
+      media_urls: mediaPaths.length > 0 ? mediaPaths : undefined,
       mediaType: options?.mediaType,
       media_type: options?.mediaType,
       metadata: {
@@ -497,6 +502,9 @@ export default function ChatBox() {
           streamClosed = true;
           commitAssistantResponse(currentMessageRef.current, aiMessageId, listingsFromPayload);
           setIsTyping(false);
+          if (mediaPaths.length > 0) {
+            pendingMediaPathsRef.current = [];
+          }
         };
 
         while (true) {
@@ -584,6 +592,9 @@ export default function ChatBox() {
           commitAssistantResponse(assistant.text, undefined, assistant.listings);
         }
         setIsTyping(false);
+        if (mediaPaths.length > 0) {
+          pendingMediaPathsRef.current = [];
+        }
         return;
       }
 
@@ -592,6 +603,9 @@ export default function ChatBox() {
         commitAssistantResponse(fallbackText);
       }
       setIsTyping(false);
+      if (mediaPaths.length > 0) {
+        pendingMediaPathsRef.current = [];
+      }
     } catch (err: any) {
       console.error('Agent bağlantı hatası:', err);
 
