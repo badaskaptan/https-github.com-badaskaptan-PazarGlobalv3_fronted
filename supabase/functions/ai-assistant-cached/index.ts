@@ -139,6 +139,19 @@ serve(async (req: Request) => {
     // 4️⃣ CACHE MISS - Perplexity çağır
     console.log('❌ CACHE MISS - Perplexity çağrılıyor');
 
+    // Log cache miss (analytics)
+    try {
+      await supabase.from('market_data_query_log').insert({
+        product_key: productKey,
+        category: category,
+        hit_type: 'cache_miss',
+        response_time_ms: 0,
+        cost: 0.0
+      });
+    } catch (_e) {
+      // best-effort
+    }
+
     const startTime = Date.now();
     const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
 
@@ -274,19 +287,20 @@ KURALLAR:
     const consistencyScore = Math.max(0, 1 - priceRangeRatio) * 0.3;
     const confidence = sourceScore + freshnessScore + consistencyScore;
 
-    // TTL hesapla
-    const ttlMap: Record<string, number> = {
-      'Elektronik': 7,
-      'Otomotiv': 14,
-      'Emlak': 30,
-      'Moda & Aksesuar': 7,
-      'Ev & Yaşam': 14,
-      'Spor & Outdoor': 14,
-      'Kitap & Hobi': 30,
-      'Mobilya': 21,
-      'Diğer': 14
-    };
-    const ttlDays = ttlMap[category] || 14;
+    // TTL hesapla (DB-configured)
+    let ttlDays = 14;
+    try {
+      const { data: ttlRow, error: ttlErr } = await supabase
+        .from('market_data_ttl_config')
+        .select('ttl_days')
+        .eq('category', category)
+        .maybeSingle();
+      if (!ttlErr && ttlRow?.ttl_days && Number.isFinite(Number(ttlRow.ttl_days))) {
+        ttlDays = Number(ttlRow.ttl_days);
+      }
+    } catch (_e) {
+      // fallback to default
+    }
 
     const expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
 
