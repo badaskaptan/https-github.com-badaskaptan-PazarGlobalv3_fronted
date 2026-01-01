@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import TopNavigation from '../../components/feature/TopNavigation';
@@ -38,13 +38,7 @@ export default function ListingDetailPage() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  useEffect(() => {
-    if (id) {
-      fetchListing();
-    }
-  }, [id]);
-
-  const fetchListing = async () => {
+  const fetchListing = useCallback(async () => {
     try {
       setLoading(true);
       const { data, error } = await supabase
@@ -100,7 +94,13 @@ export default function ListingDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    if (id) {
+      void fetchListing();
+    }
+  }, [id, fetchListing]);
 
   const formatDate = (date: string) => {
     const itemDate = new Date(date);

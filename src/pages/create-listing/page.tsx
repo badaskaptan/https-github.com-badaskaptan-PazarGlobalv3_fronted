@@ -78,18 +78,6 @@ const titleSuggestions: Record<string, string[]> = {
   ]
 };
 
-// AI Description templates
-const descriptionTemplates: Record<string, string> = {
-  'Otomotiv': 'Bu araç son derece bakımlıdır. Tüm periyodik bakımları zamanında yapılmıştır. Hasar kaydı yoktur. Orijinal boyasıdır. İç ve dış temizliği mükemmeldir.',
-  'Elektronik': 'Ürün hiç kullanılmamıştır. Orijinal kutusunda ve tüm aksesuarlarıyla birlikte. Garanti süresi devam etmektedir. Faturası mevcuttur.',
-  'Ev & Yaşam': 'Ürün çok az kullanılmıştır. Temiz ve bakımlıdır. Herhangi bir hasarı veya kusuru yoktur. Orijinal ambalajında.',
-  'Moda & Aksesuar': 'Orijinal üründür. Hiç kullanılmamıştır. Etiketlidir. Tüm aksesuarlarıyla birlikte. Faturası mevcuttur.',
-  'Spor & Outdoor': 'Profesyonel kalitede üründür. Az kullanılmıştır. Tüm fonksiyonları çalışır durumdadır. Bakımlıdır.',
-  'Kitap & Hobi': 'Koleksiyon ürünüdür. Çok iyi durumdadır. Nadir bulunur. Orijinaldir.',
-  'Mobilya': 'Mobilya çok az kullanılmıştır. Temiz ve bakımlıdır. Herhangi bir hasarı yoktur. Sökülüp takılabilir.',
-  'Diğer': 'Ürün çok iyi durumdadır. Temiz ve bakımlıdır. Tüm fonksiyonları çalışır durumdadır.'
-};
-
 // Resim sıkıştırma fonksiyonu
 const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File> => {
   return new Promise((resolve, reject) => {
@@ -118,7 +106,7 @@ const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File>
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
 
-        let quality = 0.9;
+        const quality = 0.9;
         const maxSizeBytes = maxSizeMB * 1024 * 1024;
 
         const tryCompress = (q: number) => {
@@ -154,7 +142,7 @@ const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File>
 
 export default function CreateListingPage() {
   const navigate = useNavigate();
-  const [isScrolled, setIsScrolled] = useState(false);
+  const [isScrolled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploadedImages, setUploadedImages] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
@@ -179,7 +167,6 @@ export default function CreateListingPage() {
   const [showAIAssistant, setShowAIAssistant] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [showTitleSuggestions, setShowTitleSuggestions] = useState(false);
-  const [showDescriptionSuggestions, setShowDescriptionSuggestions] = useState(false);
 
   // Kullanıcı girişi kontrolü - Hem Supabase hem WhatsApp auth
   useEffect(() => {

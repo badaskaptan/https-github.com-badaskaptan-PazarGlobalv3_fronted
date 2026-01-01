@@ -82,12 +82,6 @@ export default function AboutPage() {
     { year: '2024', title: 'Global Genişleme', description: 'Uluslararası pazarlara açıldık' },
   ];
 
-  const handleNavigation = (path: string) => {
-    if (window.REACT_APP_NAVIGATE) {
-      window.REACT_APP_NAVIGATE(path);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-cyan-50">
       <TopNavigation isScrolled={isScrolled} />

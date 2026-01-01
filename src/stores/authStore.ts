@@ -86,7 +86,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       return false;
-    } catch (error) {
+    } catch {
       return false;
     }
   },
@@ -112,7 +112,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       return false;
-    } catch (error) {
+    } catch {
       return false;
     }
   },
@@ -141,7 +141,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       return { success: true };
-    } catch (error) {
+    } catch {
       return { success: false, error: 'Giriş yapılırken bir hata oluştu' };
     }
   },
@@ -172,7 +172,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       return { success: true };
-    } catch (error) {
+    } catch {
       return { success: false, error: 'Kayıt olurken bir hata oluştu' };
     }
   },
@@ -235,7 +235,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isLoading: false,
         });
       }
-    } catch (error) {
+    } catch {
       set({
         user: null,
         customUser: null,
@@ -266,7 +266,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       set({ profile: data });
       return { success: true };
-    } catch (error) {
+    } catch {
       return { success: false, error: 'Profil güncellenirken bir hata oluştu' };
     }
   },

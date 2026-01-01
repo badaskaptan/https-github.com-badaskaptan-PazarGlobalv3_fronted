@@ -3,21 +3,19 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 interface VoiceChatProps {
   onTranscriptReady: (text: string) => void;
-  onResponseReceived?: (text: string) => void;
   isEnabled?: boolean;
   selectedVoice?: SpeechSynthesisVoice | null;
 }
 
 export default function VoiceChat({
   onTranscriptReady,
-  onResponseReceived,
   isEnabled = true,
   selectedVoice: externalSelectedVoice = null
 }: VoiceChatProps) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [correctedText, setCorrectedText] = useState('');
-  const [isCorrecting, setIsCorrecting] = useState(false);
+  const [isCorrecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [internalSelectedVoice, setInternalSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
@@ -27,6 +25,11 @@ export default function VoiceChat({
 
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+  const onTranscriptReadyRef = useRef(onTranscriptReady);
+
+  useEffect(() => {
+    onTranscriptReadyRef.current = onTranscriptReady;
+  }, [onTranscriptReady]);
 
   useEffect(() => {
     // Initialize Speech Recognition
@@ -34,8 +37,8 @@ export default function VoiceChat({
       const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.lang = 'tr-TR';
-      recognitionRef.current.continuous = true;  // Keep listening for longer
-      recognitionRef.current.interimResults = true;  // Show partial results
+      recognitionRef.current.continuous = true; // Keep listening for longer
+      recognitionRef.current.interimResults = true; // Show partial results
 
       recognitionRef.current.onresult = async (event: any) => {
         // Get final transcript (when user stops speaking)
@@ -45,13 +48,13 @@ export default function VoiceChat({
             finalTranscript += event.results[i][0].transcript;
           }
         }
-        
+
         if (finalTranscript) {
           setTranscript(finalTranscript);
           // Quick brand correction (frontend only - no backend call)
           const corrected = correctBrandNames(finalTranscript);
           setCorrectedText(corrected);
-          onTranscriptReady(corrected);
+          onTranscriptReadyRef.current(corrected);
           // Auto-stop after getting final result
           stopListening();
         }
@@ -70,23 +73,36 @@ export default function VoiceChat({
       setError('Tarayıcınız ses tanımayı desteklemiyor. Chrome veya Edge kullanın.');
     }
 
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     // Initialize Speech Synthesis
     synthRef.current = window.speechSynthesis;
-    
+
     // Auto-select default voice if not provided externally
     if (!externalSelectedVoice) {
       const loadDefaultVoice = () => {
         const availableVoices = synthRef.current?.getVoices() || [];
         const turkishVoices = availableVoices.filter(v => v.lang.startsWith('tr'));
-        if (turkishVoices.length > 0 && !internalSelectedVoice) {
-          // Prefer Emel (female) or other quality voices over Tolga (has audio issues)
-          const preferredVoice = turkishVoices.find(v => v.name.includes('Emel')) ||
-                                 turkishVoices.find(v => v.name.toLowerCase().includes('female')) ||
-                                 turkishVoices[turkishVoices.length > 1 ? 1 : 0]; // Skip first if multiple available
-          setInternalSelectedVoice(preferredVoice);
-          console.log('🎤 Default voice selected:', preferredVoice.name);
+        if (turkishVoices.length > 0) {
+          const preferredVoice =
+            turkishVoices.find(v => v.name.includes('Emel')) ||
+            turkishVoices.find(v => v.name.toLowerCase().includes('female')) ||
+            turkishVoices[turkishVoices.length > 1 ? 1 : 0];
+
+          setInternalSelectedVoice(prev => {
+            if (prev) return prev;
+            console.log('🎤 Default voice selected:', preferredVoice.name);
+            return preferredVoice;
+          });
         }
       };
+
       loadDefaultVoice();
       setTimeout(loadDefaultVoice, 100);
       if (synthRef.current) {
@@ -95,14 +111,11 @@ export default function VoiceChat({
     }
 
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
       if (synthRef.current) {
         synthRef.current.cancel();
       }
     };
-  }, [selectedVoice]);
+  }, [externalSelectedVoice]);
 
   const startListening = () => {
     if (!isEnabled) return;
@@ -127,27 +140,6 @@ export default function VoiceChat({
       recognitionRef.current.stop();
     }
     setIsListening(false);
-  };
-
-  // Convert numbers to Turkish words for better TTS
-  const convertNumberToWords = (num: number): string => {
-    const ones = ['', 'bir', 'iki', 'üç', 'dört', 'beş', 'altı', 'yedi', 'sekiz', 'dokuz'];
-    const tens = ['', 'on', 'yirmi', 'otuz', 'kırk', 'elli', 'altmış', 'yetmiş', 'seksen', 'doksan'];
-    const hundreds = ['', 'yüz', 'iki yüz', 'üç yüz', 'dört yüz', 'beş yüz', 'altı yüz', 'yedi yüz', 'sekiz yüz', 'dokuz yüz'];
-    
-    if (num === 0) return 'sıfır';
-    if (num < 10) return ones[num];
-    if (num < 100) {
-      const ten = Math.floor(num / 10);
-      const one = num % 10;
-      return tens[ten] + (one > 0 ? ' ' + ones[one] : '');
-    }
-    if (num < 1000) {
-      const hundred = Math.floor(num / 100);
-      const remainder = num % 100;
-      return hundreds[hundred] + (remainder > 0 ? ' ' + convertNumberToWords(remainder) : '');
-    }
-    return num.toString(); // Fallback for very large numbers
   };
 
   const correctBrandNames = (text: string): string => {
@@ -181,6 +173,26 @@ export default function VoiceChat({
 
   const speak = useCallback((text: string) => {
     if (!synthRef.current || !isEnabled) return;
+
+    const convertNumberToWords = (num: number): string => {
+      const ones = ['', 'bir', 'iki', 'üç', 'dört', 'beş', 'altı', 'yedi', 'sekiz', 'dokuz'];
+      const tens = ['', 'on', 'yirmi', 'otuz', 'kırk', 'elli', 'altmış', 'yetmiş', 'seksen', 'doksan'];
+      const hundreds = ['', 'yüz', 'iki yüz', 'üç yüz', 'dört yüz', 'beş yüz', 'altı yüz', 'yedi yüz', 'sekiz yüz', 'dokuz yüz'];
+
+      if (num === 0) return 'sıfır';
+      if (num < 10) return ones[num];
+      if (num < 100) {
+        const ten = Math.floor(num / 10);
+        const one = num % 10;
+        return tens[ten] + (one > 0 ? ' ' + ones[one] : '');
+      }
+      if (num < 1000) {
+        const hundred = Math.floor(num / 100);
+        const remainder = num % 100;
+        return hundreds[hundred] + (remainder > 0 ? ' ' + convertNumberToWords(remainder) : '');
+      }
+      return num.toString();
+    };
 
     // Clean text for voice (remove emojis, URLs, and technical content)
     let cleanText = text;

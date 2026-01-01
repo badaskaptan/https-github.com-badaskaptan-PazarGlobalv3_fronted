@@ -26,7 +26,7 @@ export default function ListingsPage() {
 
   // Only use real data from Supabase
   const [filteredListings, setFilteredListings] = useState<Listing[]>([]);
-  const [isLoadingFromSupabase, setIsLoadingFromSupabase] = useState(false);
+  const [, setIsLoadingFromSupabase] = useState(false);
 
   const [filters, setFilters] = useState<FilterState>({
     categories: [],
@@ -79,7 +79,7 @@ export default function ListingsPage() {
         }));
 
         // Sort the listings
-        let sortedListings = [...convertedListings];
+        const sortedListings = [...convertedListings];
         switch (sortBy) {
           case 'newest':
             sortedListings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -123,12 +123,6 @@ export default function ListingsPage() {
       isPremium: false,
       dateRange: 'all',
     });
-  };
-
-  const handleNavigation = (path: string) => {
-    if (window.REACT_APP_NAVIGATE) {
-      window.REACT_APP_NAVIGATE(path);
-    }
   };
 
   return (

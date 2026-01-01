@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import TopNavigation from '../../components/feature/TopNavigation';
 import { supabase } from '../../lib/supabase';
@@ -28,11 +28,7 @@ export default function ProfilePage() {
 
   const [hasWhatsAppSecurity, setHasWhatsAppSecurity] = useState(false);
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  const checkUser = async () => {
+  const checkUser = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
@@ -75,7 +71,11 @@ export default function ProfilePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
+
+  useEffect(() => {
+    void checkUser();
+  }, [checkUser]);
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();

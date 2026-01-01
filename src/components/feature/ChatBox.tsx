@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { createClient } from '@supabase/supabase-js';
@@ -6,7 +6,7 @@ import { useAuthStore } from '../../stores/authStore';
 import VoiceChat from './VoiceChat';
 import VoiceSelector from './VoiceSelector';
 import ReactMarkdown from 'react-markdown';
-import { format, formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Pagination, Navigation } from 'swiper/modules';
@@ -73,161 +73,6 @@ const dedupePaths = (paths: string[]): string[] => {
   return result;
 };
 
-const normalizeIntentText = (text: string): string => (text || '').toLowerCase().trim();
-
-// Very small local intent guard:
-// If user is just greeting / wants to chat, don't trigger listing-search flow.
-const shouldHandleAsChitChat = (message: string): boolean => {
-  const text = normalizeIntentText(message);
-  if (!text) return false;
-
-  // If the user explicitly asks about listings/search/details/pricing, let the backend handle it.
-  const listingSignals = [
-    'ilan',
-    'satilik',
-    'satılık',
-    'fiyat',
-    'ne kadar',
-    'kaç tl',
-    'kac tl',
-    'kaç ₺',
-    'ara',
-    'arama',
-    'bul',
-    'listele',
-    'göster',
-    'goster',
-    'detay',
-    'nolu ilanın',
-    'no\'lu ilanın',
-  ];
-  if (listingSignals.some((signal) => text.includes(signal))) return false;
-
-  const greetingSignals = [
-    'selam',
-    'merhaba',
-    'mrb',
-    'slm',
-    'sa',
-    'hi',
-    'hello',
-    'naber',
-    'ne haber',
-    'nasılsın',
-    'nasilsin',
-    'sohbet',
-    'konuş',
-    'konus',
-    'konuşma',
-    'muhabbet',
-  ];
-
-  // Short, conversational intents should be caught early.
-  if (greetingSignals.some((signal) => text === signal || text.startsWith(`${signal} `) || text.includes(` ${signal} `))) {
-    return true;
-  }
-
-  return false;
-};
-
-type ExtractedListingFields = {
-  title?: string;
-  description?: string;
-  category?: string;
-  price?: number;
-  location?: string;
-};
-
-const extractListingFieldsFromFreeText = (message: string): ExtractedListingFields => {
-  const original = (message || '').trim();
-  const text = original;
-  const lower = normalizeIntentText(original);
-
-  const extracted: ExtractedListingFields = {};
-
-  // Price: "15000 tl", "15.000 ₺", "fiyat: 15000"
-  const priceMatch = text.match(/(?:fiyat\s*[:=]?\s*)?(\d{2,3}(?:[\s.,]\d{3})*|\d{3,})\s*(?:₺|tl|try|lira)\b/i);
-  if (priceMatch?.[1]) {
-    const normalizedNumber = priceMatch[1].replace(/[\s.,]/g, '');
-    const parsed = parseInt(normalizedNumber, 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      extracted.price = parsed;
-    }
-  }
-
-  // Category: "kategori elektronik", "Kategory: Elektronik"
-  const categoryMatch = text.match(/\b(?:kategori|kategory|category)\s*[:=]?\s*([^\n.,;]+)\b/i);
-  if (categoryMatch?.[1]) {
-    extracted.category = categoryMatch[1].trim();
-  }
-
-  // Title / description (optional explicit labels)
-  const titleMatch = text.match(/\b(?:başlık|baslik|ürün adı|urun adi|urun|ürün)\s*[:=]?\s*([^\n]+)\b/i);
-  if (titleMatch?.[1]) {
-    extracted.title = titleMatch[1].trim();
-  }
-  const descMatch = text.match(/\b(?:açıklama|aciklama|detay)\s*[:=]?\s*([\s\S]+)$/i);
-  if (descMatch?.[1]) {
-    extracted.description = descMatch[1].trim();
-  }
-
-  // Lightweight location guess (only a few common cities unless explicitly labeled)
-  const locationLabelMatch = text.match(/\b(?:konum|şehir|sehir|il)\s*[:=]?\s*([^\n.,;]+)\b/i);
-  if (locationLabelMatch?.[1]) {
-    extracted.location = locationLabelMatch[1].trim();
-  } else {
-    const commonCities = ['istanbul', 'ankara', 'izmir', 'bursa', 'antalya', 'adana', 'konya', 'gaziantep'];
-    const city = commonCities.find((c) => lower.includes(c));
-    if (city) {
-      extracted.location = city.charAt(0).toUpperCase() + city.slice(1);
-    }
-  }
-
-  // If title/description not explicitly provided, infer from remaining text.
-  if (!extracted.title || !extracted.description) {
-    let remainder = original;
-    remainder = remainder.replace(/\b(?:kategori|kategory|category)\s*[:=]?\s*[^\n.,;]+\b/gi, ' ');
-    remainder = remainder.replace(/(?:fiyat\s*[:=]?\s*)?(\d{2,3}(?:[\s.,]\d{3})*|\d{3,})\s*(?:₺|tl|try|lira)\b/gi, ' ');
-    remainder = remainder.replace(/\b(fiyat|kategori|kategory|category)\b/gi, ' ');
-    remainder = remainder.replace(/\s+/g, ' ').trim();
-
-    // If user included extra info, treat first chunk as title, full remainder as description.
-    if (!extracted.title && remainder) {
-      extracted.title = remainder.length > 80 ? remainder.slice(0, 80).trim() : remainder;
-    }
-    if (!extracted.description && remainder) {
-      extracted.description = remainder;
-    }
-  }
-
-  return extracted;
-};
-
-const shouldNormalizeAsListingDetails = (message: string, activeTab: Tab): boolean => {
-  const text = normalizeIntentText(message);
-  if (!text) return false;
-  if (activeTab !== 'listing') return false;
-
-  const hasPrice = /\b(?:fiyat\b|\d+\s*(?:₺|tl|try|lira)\b)/i.test(message);
-  const hasCategory = /\b(?:kategori|kategory|category)\b/i.test(message);
-  // Trigger only when it really looks like the user is providing listing fields.
-  return hasPrice || hasCategory;
-};
-
-const buildStructuredListingMessage = (originalMessage: string): string => {
-  const fields = extractListingFieldsFromFreeText(originalMessage);
-  const lines: string[] = [];
-  lines.push('Lütfen aşağıdaki bilgileri ilan taslağına işle:');
-  if (fields.title) lines.push(`Başlık: ${fields.title}`);
-  if (fields.description) lines.push(`Açıklama: ${fields.description}`);
-  if (typeof fields.price === 'number') lines.push(`Fiyat: ${fields.price} TL`);
-  if (fields.category) lines.push(`Kategori: ${fields.category}`);
-  if (fields.location) lines.push(`Konum: ${fields.location}`);
-  lines.push('');
-  lines.push(`(Kullanıcının orijinal mesajı: ${originalMessage})`);
-  return lines.join('\n');
-};
-
 // Resim sıkıştırma fonksiyonu
 const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File> => {
   return new Promise((resolve, reject) => {
@@ -258,7 +103,7 @@ const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File>
         ctx?.drawImage(img, 0, 0, width, height);
 
         // Kalite ayarı ile sıkıştırma
-        let quality = 0.9;
+        const quality = 0.9;
         const maxSizeBytes = maxSizeMB * 1024 * 1024;
 
         const tryCompress = (q: number) => {
@@ -342,7 +187,7 @@ const uploadImageToSupabase = async (file: File, userId: string): Promise<{ stor
 
 export default function ChatBox() {
   const navigate = useNavigate();
-  const { user, customUser, profile, checkAuth } = useAuthStore();
+  const { user, customUser } = useAuthStore();
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('listing');
   const [messages, setMessages] = useState<Message[]>([
@@ -354,7 +199,7 @@ export default function ChatBox() {
     },
   ]);
   const [inputValue, setInputValue] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecording] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -396,79 +241,9 @@ export default function ChatBox() {
     pendingMediaPublicMapRef.current = filteredMap;
   };
 
-  const removePendingMediaItems = (paths: string[]) => {
-    if (!paths || paths.length === 0) return;
-    const filtered = pendingMediaPathsRef.current.filter((path) => !paths.includes(path));
-    const filteredMap: Record<string, string> = {};
-    filtered.forEach((path) => {
-      const publicUrl = pendingMediaPublicMapRef.current[path];
-      if (publicUrl) {
-        filteredMap[path] = publicUrl;
-      }
-    });
-    pendingMediaPathsRef.current = filtered;
-    pendingMediaPublicMapRef.current = filteredMap;
-  };
-
   const getPublicUrlsForPaths = (paths: string[]) => {
     if (!paths || paths.length === 0) return [];
     return paths.map((path) => pendingMediaPublicMapRef.current[path] || path);
-  };
-
-  const ensureWebhookUrl = () => {
-    if (!WEBCHAT_WEBHOOK_URL) {
-      throw new Error('VITE_WEBCHAT_WEBHOOK_URL tanımlı değil. n8n webchat webhook adresini .env dosyanıza ekleyin.');
-    }
-
-    // Basic validation: must contain "/webhook/" and at least one path segment
-    try {
-      const u = new URL(WEBCHAT_WEBHOOK_URL);
-      if (!u.pathname.includes('/webhook/') && !u.pathname.includes('/webhook')) {
-        console.warn('VITE_WEBCHAT_WEBHOOK_URL görünümü beklenen formatta değil:', WEBCHAT_WEBHOOK_URL);
-      }
-      return WEBCHAT_WEBHOOK_URL;
-    } catch (e) {
-      throw new Error('VITE_WEBCHAT_WEBHOOK_URL geçersiz bir URL olarak görünüyor: ' + WEBCHAT_WEBHOOK_URL);
-    }
-  };
-
-  const handleMediaMetaUpdate = (payload: any) => {
-    const safe = Array.isArray(payload?.safe_media_paths) ? (payload.safe_media_paths as string[]) : [];
-    const safePublicUrls = Array.isArray(payload?.safe_media_public_urls)
-      ? (payload.safe_media_public_urls as string[])
-      : [];
-    const blocked = Array.isArray(payload?.blocked_media_paths) ? payload.blocked_media_paths : [];
-    const blockedPaths = blocked
-      .map((entry: any) => (entry && typeof entry === 'object' ? entry.path : null))
-      .filter(Boolean) as string[];
-
-    if (safe.length > 0) {
-      const safeItems = safe.map((path, idx) => ({
-        path,
-        publicUrl: safePublicUrls[idx],
-      }));
-      addPendingMediaItems(safeItems);
-    }
-
-    if (blockedPaths.length > 0) {
-      removePendingMediaItems(blockedPaths);
-    }
-
-    if (blocked.length > 0) {
-      const blockedMessage: Message = {
-        id: `${Date.now()}_blocked`,
-        type: 'ai',
-        content: `⚠️ ${blocked.length} fotoğraf güvenlik kontrolünden geçemedi ve elendi. ${safe.length} fotoğraf güvenli olarak kaydedildi.`,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, blockedMessage]);
-    }
-
-    const mediaNote = `[SYSTEM_MEDIA_NOTE] MEDIA_PATHS=${JSON.stringify(pendingMediaPathsRef.current)}`;
-    const last = conversationHistory.current[conversationHistory.current.length - 1];
-    if (!last || last.role !== 'assistant' || last.content !== mediaNote) {
-      conversationHistory.current.push({ role: 'assistant', content: mediaNote });
-    }
   };
 
   const commitAssistantResponse = (rawContent: string, aiMessageId?: string, forcedListings?: any[]) => {
@@ -525,15 +300,15 @@ export default function ChatBox() {
     }
   };
 
-  const WEBCHAT_WEBHOOK_URL = import.meta.env.VITE_WEBCHAT_WEBHOOK_URL?.trim();
-
-  // Direct agent API sender (preferred when AGENT_API_BASE is set)
+  // Direct agent API sender
   const sendMessageToAgentDirect = async (
     message: string,
     mediaPayload: { storagePaths: string[]; publicUrls: string[] },
     resolvedUserId: string
   ) => {
-    if (!AGENT_API_BASE) return false;
+    if (!AGENT_API_BASE) {
+      throw new Error('VITE_AGENT_API_BASE tanımlı değil. Agent API adresini .env dosyanıza ekleyin.');
+    }
     const endpoint = `${AGENT_API_BASE.replace(/\/$/, '')}/webchat/message`;
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -544,7 +319,6 @@ export default function ChatBox() {
         session_id: resolvedUserId,
         message,
         user_id: resolvedUserId,
-        media_paths: mediaPayload.storagePaths.length > 0 ? mediaPayload.storagePaths : undefined,
         media_url: mediaPayload.publicUrls[0],
         media_urls: mediaPayload.publicUrls.length > 0 ? mediaPayload.publicUrls : undefined,
       }),
@@ -611,18 +385,8 @@ export default function ChatBox() {
     setIsConnecting(true);
     setError(null);
     currentMessageRef.current = '';
-
-    const sessionToken = localStorage.getItem('session_token');
     const storedUserId = localStorage.getItem('user_id');
     const resolvedUserId = customUser?.id || user?.id || storedUserId || getUserId();
-    const userContext = {
-      user_id: resolvedUserId,
-      session_token: sessionToken || undefined,
-      email: user?.email || customUser?.email || undefined,
-      phone: customUser?.phone || undefined,
-      name: profile?.full_name || customUser?.full_name || user?.user_metadata?.full_name || undefined,
-      source: 'web-chat',
-    };
 
     conversationHistory.current.push({
       role: 'user',
@@ -631,254 +395,22 @@ export default function ChatBox() {
 
     const mediaStoragePaths = dedupePaths(options?.mediaPaths || []);
     const mediaPublicUrls = getPublicUrlsForPaths(mediaStoragePaths);
-
-    if (AGENT_API_BASE) {
-      try {
-        await sendMessageToAgentDirect(
-          message,
-          { storagePaths: mediaStoragePaths, publicUrls: mediaPublicUrls },
-          resolvedUserId
-        );
-        setIsTyping(false);
-        setIsConnecting(false);
-        return;
-      } catch (apiErr) {
-        console.warn('Agent API call failed, falling back to webhook flow:', apiErr);
-      }
-    }
-
-    if (mediaStoragePaths.length > 0) {
-      console.log('🖼️  Sending media_paths to n8n webhook:', mediaStoragePaths);
-      console.log('🖼️  Sending media_urls to n8n webhook:', mediaPublicUrls);
-      console.log('🖼️  Sending media_type to n8n webhook:', options?.mediaType);
-    }
-
-    const payload = {
-      sessionId: resolvedUserId,
-      message,
-      source: 'pazarglobal-webchat',
-      mediaPaths: mediaStoragePaths.length > 0 ? mediaStoragePaths : undefined,
-      media_paths: mediaStoragePaths.length > 0 ? mediaStoragePaths : undefined,
-      media_urls: mediaPublicUrls.length > 0 ? mediaPublicUrls : undefined,
-      mediaType: options?.mediaType,
-      media_type: options?.mediaType,
-      metadata: {
-        userContext,
-        mediaPaths: mediaStoragePaths.length > 0 ? mediaStoragePaths : undefined,
-        mediaUrls: mediaPublicUrls.length > 0 ? mediaPublicUrls : undefined,
-        mediaType: options?.mediaType,
-        conversationHistory: conversationHistory.current,
-        pendingMedia: pendingMediaPathsRef.current,
-      },
-    };
-
-    const upsertStreamingMessage = (aiMessageId: string) => {
-      setMessages((prev) => {
-        const existingIndex = prev.findIndex((m) => m.id === aiMessageId);
-        if (existingIndex >= 0) {
-          const updated = [...prev];
-          updated[existingIndex] = {
-            ...updated[existingIndex],
-            content: currentMessageRef.current,
-          };
-          return updated;
-        }
-        return [
-          ...prev,
-          {
-            id: aiMessageId,
-            type: 'ai',
-            content: currentMessageRef.current,
-            timestamp: new Date(),
-          },
-        ];
-      });
-    };
-
-    const extractAssistantFromJson = (data: any) => {
-      if (!data) {
-        return { text: '', listings: undefined as any[] | undefined };
-      }
-      if (typeof data.message === 'string') {
-        return { text: data.message, listings: data.listings };
-      }
-      if (typeof data.response === 'string') {
-        return { text: data.response, listings: data.listings };
-      }
-      if (typeof data.text === 'string') {
-        return { text: data.text, listings: data.listings };
-      }
-      if (Array.isArray(data.messages)) {
-        const assistant = data.messages.find((m: any) => m.role === 'assistant');
-        if (assistant?.content) {
-          return { text: assistant.content, listings: assistant.listings || data.listings };
-        }
-      }
-      if (data.data?.message) {
-        return { text: data.data.message, listings: data.data.listings };
-      }
-      return { text: '', listings: undefined };
-    };
-
     try {
-      const webhookUrl = ensureWebhookUrl();
-      console.debug('Posting to n8n webhook:', webhookUrl, 'payload:', {
-        sessionId: resolvedUserId,
+      await sendMessageToAgentDirect(
         message,
-        mediaPaths: mediaStoragePaths,
-        mediaUrls: mediaPublicUrls,
-      });
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        let errorText = '';
-        try {
-          errorText = await response.text();
-        } catch (e) {
-          errorText = '<failed to read response body>';
-        }
-        console.error('n8n webhook non-OK response', { status: response.status, statusText: response.statusText, headers: Object.fromEntries(response.headers.entries()), body: errorText });
-        throw new Error(`n8n webhook hatası (${response.status}): ${errorText || response.statusText || 'Bilinmeyen hata'}`);
-      }
-
-      setIsConnecting(false);
-
-      const contentType = response.headers.get('content-type') || '';
-
-      if (contentType.includes('text/event-stream')) {
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error('n8n SSE yanıtı okunamadı.');
-        }
-
-        const decoder = new TextDecoder();
-        const aiMessageId = Date.now().toString();
-        let buffer = '';
-        let streamClosed = false;
-
-        const finalizeStream = (listingsFromPayload?: any[]) => {
-          if (streamClosed) return;
-          streamClosed = true;
-          commitAssistantResponse(currentMessageRef.current, aiMessageId, listingsFromPayload);
-          setIsTyping(false);
-          if (mediaStoragePaths.length > 0) {
-            clearPendingMedia();
-          }
-        };
-
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            finalizeStream();
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line || !line.startsWith('data:')) {
-              continue;
-            }
-
-            const payloadLine = line.slice(5).trim();
-            if (!payloadLine) {
-              continue;
-            }
-
-            if (payloadLine === '[DONE]') {
-              finalizeStream();
-              continue;
-            }
-
-            try {
-              const data = JSON.parse(payloadLine);
-
-              if (data.type === 'meta' || data.event === 'meta') {
-                handleMediaMetaUpdate(data);
-                continue;
-              }
-
-              if (data.type === 'error' || data.event === 'error') {
-                throw new Error(data.content || data.message || 'n8n workflow hata döndürdü.');
-              }
-
-              const chunk = data.token ?? data.content ?? data.text ?? data.delta;
-              if (typeof chunk === 'string' && chunk.length > 0) {
-                currentMessageRef.current += chunk;
-                upsertStreamingMessage(aiMessageId);
-                continue;
-              }
-
-              if (data.type === 'done' || data.done === true || data.event === 'end') {
-                if (typeof data.message === 'string') {
-                  currentMessageRef.current = data.message;
-                } else if (typeof data.answer === 'string') {
-                  currentMessageRef.current = data.answer;
-                } else if (data.message?.content) {
-                  currentMessageRef.current = data.message.content;
-                }
-                finalizeStream(data.listings || data.metadata?.listings);
-                continue;
-              }
-
-              if (Array.isArray(data.messages)) {
-                const assistant = data.messages.find((m: any) => m.role === 'assistant');
-                if (assistant?.content) {
-                  currentMessageRef.current = assistant.content;
-                  finalizeStream(data.listings || assistant.listings);
-                  continue;
-                }
-              }
-            } catch (parseError) {
-              console.error('SSE parse hatası:', parseError, 'Line:', payloadLine);
-              currentMessageRef.current += payloadLine;
-              upsertStreamingMessage(aiMessageId);
-            }
-          }
-        }
-
-        return;
-      }
-
-      if (contentType.includes('application/json')) {
-        const json = await response.json();
-        const assistant = extractAssistantFromJson(json);
-        if (assistant.text) {
-          commitAssistantResponse(assistant.text, undefined, assistant.listings);
-        }
-        setIsTyping(false);
-        if (mediaStoragePaths.length > 0) {
-          clearPendingMedia();
-        }
-        return;
-      }
-
-      const fallbackText = await response.text();
-      if (fallbackText) {
-        commitAssistantResponse(fallbackText);
-      }
+        { storagePaths: mediaStoragePaths, publicUrls: mediaPublicUrls },
+        resolvedUserId
+      );
       setIsTyping(false);
-      if (mediaStoragePaths.length > 0) {
-        clearPendingMedia();
-      }
+      setIsConnecting(false);
+      return;
     } catch (err: any) {
       console.error('Agent bağlantı hatası:', err);
 
       let errorMessage = 'Bağlantı hatası. Lütfen tekrar deneyin.';
 
       if (err.name === 'TypeError' && err.message.includes('fetch')) {
-        errorMessage = 'n8n webhook adresine ulaşılamıyor. CORS veya network hatası olabilir.';
+        errorMessage = 'Agent API adresine ulaşılamıyor. CORS veya network hatası olabilir.';
       } else if (err.message) {
         errorMessage = err.message;
       }
@@ -890,7 +422,7 @@ export default function ChatBox() {
       const errorAiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: '⚠️ Üzgünüm, şu anda n8n webchat akışına bağlanamıyorum. Workflow\'un aktif olduğundan emin olduktan sonra tekrar deneyin.',
+        content: "⚠️ Üzgünüm, şu anda Agent API'ye bağlanamıyorum. Backend'in çalıştığından ve VITE_AGENT_API_BASE'in doğru olduğundan emin olduktan sonra tekrar deneyin.",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorAiMessage]);
@@ -911,31 +443,16 @@ export default function ChatBox() {
     const messageToSend = inputValue;
     setInputValue('');
 
-    // If user is just greeting / wants to chat, answer directly (prevents listing-search replies like "0 ilan bulundu...").
-    if (shouldHandleAsChitChat(messageToSend)) {
-      if (activeTab === 'listing') {
-        setActiveTab('general');
-      }
-      commitAssistantResponse('Merhaba! Tabii, sohbet edebiliriz. Ne hakkında konuşmak istersin?');
-      return;
-    }
-
     if (messageToSend.toLowerCase().trim().startsWith('iptal')) {
       clearPendingMedia();
     }
     
     // Include any pending media from image uploads
     const mediaPaths = pendingMediaPathsRef.current || [];
-    const resolvedUserId = customUser?.id || user?.id || localStorage.getItem('user_id') || getUserId();
-
-    // Normalize free-form listing details to avoid draft "missing fields" loops.
-    const outgoingMessage = shouldNormalizeAsListingDetails(messageToSend, activeTab)
-      ? buildStructuredListingMessage(messageToSend)
-      : messageToSend;
-
+    
     // Send to agent backend
     const options = mediaPaths.length > 0 ? { mediaPaths, mediaType: 'image' } : undefined;
-    sendMessageToAgent(outgoingMessage, options);
+    sendMessageToAgent(messageToSend, options);
   };
 
   const handleQuickAction = (action: string) => {
@@ -1077,35 +594,6 @@ export default function ChatBox() {
   };
 
   // Removed: Speech is now triggered immediately in sendMessageToAgent
-
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
-    if (!isRecording) {
-      setTimeout(() => {
-        setIsRecording(false);
-        const newMessage: Message = {
-          id: Date.now().toString(),
-          type: 'user',
-          content: '🎤 Sesli mesaj kaydedildi',
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, newMessage]);
-        
-        // TODO: Implement voice message to agent backend
-        setIsTyping(true);
-        setTimeout(() => {
-          const aiResponse: Message = {
-            id: (Date.now() + 1).toString(),
-            type: 'ai',
-            content: 'Sesli mesaj özelliği yakında aktif olacak!',
-            timestamp: new Date(),
-          };
-          setMessages((prev) => [...prev, aiResponse]);
-          setIsTyping(false);
-        }, 1500);
-      }, 3000);
-    }
-  };
 
   const quickActions = [
     { id: 'create', icon: 'ri-add-circle-line', label: 'İlan Oluştur', color: 'from-purple-500 to-blue-500' },
@@ -1386,66 +874,6 @@ export default function ChatBox() {
     );
   };
 
-  const renderMessage = (msg: Message) => {
-    const isUser = msg.type === 'user';
-    
-    // Parse listings from message
-    let listings: any[] = [];
-    let cleanContent = msg.content;
-    
-    const cacheMatch = msg.content.match(/\[SEARCH_CACHE\]({.*})/s);
-    if (cacheMatch) {
-      try {
-        const cacheData = JSON.parse(cacheMatch[1]);
-        listings = cacheData.results || [];
-        cleanContent = msg.content.replace(/\[SEARCH_CACHE\]({.*})/s, '').trim();
-      } catch (e) {
-        console.error('Failed to parse listings:', e);
-      }
-    }
-
-    return (
-      <div
-        key={msg.id}
-        className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}
-      >
-        <div className={`flex items-start space-x-2 max-w-[85%] ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-            isUser ? 'bg-purple-600' : 'bg-gray-200'
-          }`}>
-            <i className={`${isUser ? 'ri-user-line text-white' : 'ri-robot-line text-gray-600'}`}></i>
-          </div>
-          <div className="flex flex-col space-y-2 flex-1 min-w-0">
-            <div
-              className={`px-4 py-3 rounded-2xl break-words whitespace-pre-wrap ${
-                isUser
-                  ? 'bg-purple-600 text-white rounded-tr-none'
-                  : 'bg-gray-100 text-gray-900 rounded-tl-none'
-              }`}
-            >
-              {cleanContent}
-            </div>
-            
-            {/* Render Listings */}
-            {listings.length > 0 && (
-              <div className="space-y-2">
-                {listings.slice(0, 3).map((listing) => renderListingCard(listing))}
-                {listings.length > 3 && (
-                  <button
-                    onClick={() => navigate('/listings')}
-                    className="w-full py-2 text-sm text-purple-600 hover:text-purple-700 font-medium transition-colors"
-                  >
-                    Tüm İlanları Gör ({listings.length} ilan)
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <>
       {/* FAB Button */}
@@ -1620,8 +1048,7 @@ export default function ChatBox() {
                                   <ReactMarkdown
                                     className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5"
                                     components={{
-                                      code({ children, ...props }: any) {
-                                        const inline = !!props?.inline;
+                                      code({ inline, children, ...props }: any) {
                                         return inline ? (
                                           <code className="bg-purple-50 text-purple-700 px-1 py-0.5 rounded text-xs font-mono" {...props}>
                                             {children}
@@ -1632,14 +1059,14 @@ export default function ChatBox() {
                                           </code>
                                         );
                                       },
-                                      a({ node, href, children, ...props }) {
+                                      a({ href, children, ...props }: any) {
                                         return (
                                           <a href={href} target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline" {...props}>
                                             {children}
                                           </a>
                                         );
                                       },
-                                      img({ node, src, alt, ...props }) {
+                                      img({ src, alt, ...props }: any) {
                                         return (
                                           <div className="my-2">
                                             <img src={src || ''} alt={alt || ''} className="rounded-lg max-h-64 w-full object-cover" {...props} />

@@ -1,7 +1,5 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
-/* eslint-disable no-inline-styles */
-/* stylelint-disable */
 import TopNavigation from '../../components/feature/TopNavigation';
 
 interface Review {
@@ -212,8 +210,6 @@ export default function ReviewsPage() {
                       <i className="ri-star-fill text-amber-500 text-sm" />
                     </div>
                     <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      {/* eslint-disable-next-line no-inline-styles */}
-                      {/* stylelint-disable-next-line */}
                       <div
                         className="h-full bg-gradient-to-r from-amber-500 to-orange-500"
                         style={{ width: `${dist.percentage}%` }}
