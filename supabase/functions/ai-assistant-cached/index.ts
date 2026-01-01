@@ -196,16 +196,33 @@ KURALLAR:
     console.log('🌐 Perplexity yanıt:', priceText);
     console.log('🔗 Kaynaklar:', searchResults.length);
 
-    // Parse fiyat
-    const cleanText = priceText.replace(/TL|₺|lira|try/gi, '').replace(/[.,]/g, '').trim();
-    const rangeMatch = cleanText.match(/(\d{4,})\s*[-–—]\s*(\d{4,})/);
+    // Parse fiyat (robust): accept either a range (X-Y) or a single price.
+    const cleanText = priceText
+      .replace(/TL|₺|lira|try/gi, '')
+      .replace(/[.,]/g, '')
+      .trim();
 
-    if (!rangeMatch) {
+    const numbers = cleanText.match(/\d{4,}/g) || [];
+    let minPrice = 0;
+    let maxPrice = 0;
+
+    if (numbers.length >= 2) {
+      minPrice = parseInt(numbers[0], 10);
+      maxPrice = parseInt(numbers[1], 10);
+    } else if (numbers.length === 1) {
+      const single = parseInt(numbers[0], 10);
+      minPrice = Math.round(single * 0.85);
+      maxPrice = Math.round(single * 1.15);
+    } else {
       throw new Error('Fiyat parse edilemedi');
     }
 
-    const minPrice = parseInt(rangeMatch[1]);
-    const maxPrice = parseInt(rangeMatch[2]);
+    if (minPrice > maxPrice) {
+      const tmp = minPrice;
+      minPrice = maxPrice;
+      maxPrice = tmp;
+    }
+
     const avgPrice = (minPrice + maxPrice) / 2;
 
     // Kaynakları parse et
