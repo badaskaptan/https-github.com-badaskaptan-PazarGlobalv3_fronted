@@ -202,15 +202,25 @@ KURALLAR:
       .replace(/[.,]/g, '')
       .trim();
 
-    const numbers = cleanText.match(/\d{4,}/g) || [];
+    // Accept values like "25-35 bin" too (Perplexity often answers like that).
+    const numbers = cleanText.match(/\d{2,}/g) || [];
     let minPrice = 0;
     let maxPrice = 0;
 
+    const hasThousandsHint = /\b(bin|k)\b/i.test(cleanText);
+
+    const toPrice = (n: string): number => {
+      const v = parseInt(n, 10);
+      if (Number.isNaN(v)) return 0;
+      if (hasThousandsHint && v > 0 && v < 1000) return v * 1000;
+      return v;
+    };
+
     if (numbers.length >= 2) {
-      minPrice = parseInt(numbers[0], 10);
-      maxPrice = parseInt(numbers[1], 10);
+      minPrice = toPrice(numbers[0]);
+      maxPrice = toPrice(numbers[1]);
     } else if (numbers.length === 1) {
-      const single = parseInt(numbers[0], 10);
+      const single = toPrice(numbers[0]);
       minPrice = Math.round(single * 0.85);
       maxPrice = Math.round(single * 1.15);
     } else {
