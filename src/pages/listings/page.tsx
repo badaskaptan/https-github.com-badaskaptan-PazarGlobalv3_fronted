@@ -9,12 +9,35 @@ import { fetchListingsWithFilters, type DBListing } from '../../services/supabas
 import { supabase } from '../../lib/supabase';
 import type { Listing, FilterState } from '../../types/listing';
 
-// Resolve a Supabase storage path or direct URL to a public URL
-const resolveImageUrl = (path?: string | null) => {
-  if (!path) return null;
-  if (path.startsWith('http')) return path;
+// Resolve a Supabase storage path or direct URL to a public URL.
+// Supports both string arrays and object-based image entries.
+const resolveImageUrl = (entry?: unknown) => {
+  if (!entry) return null;
 
-  const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+  const extractCandidate = (value: unknown): string | null => {
+    if (!value) return null;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed ? trimmed : null;
+    }
+    if (typeof value === 'object') {
+      const typed = value as {
+        image_url?: unknown;
+        public_url?: unknown;
+        url?: unknown;
+        path?: unknown;
+      };
+      const candidate = typed.image_url ?? typed.public_url ?? typed.url ?? typed.path;
+      return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+    }
+    return null;
+  };
+
+  const candidate = extractCandidate(entry);
+  if (!candidate) return null;
+  if (/^https?:\/\//i.test(candidate)) return candidate;
+
+  const { data } = supabase.storage.from('product-images').getPublicUrl(candidate);
   return data.publicUrl || null;
 };
 

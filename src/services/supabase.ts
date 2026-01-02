@@ -11,7 +11,16 @@ export interface DBListing {
   location: string | null;
   condition: string;
   image_url: string | null;
-  images: string[];
+  images: (
+    | string
+    | {
+        image_url?: string;
+        public_url?: string;
+        url?: string;
+        path?: string;
+        metadata?: Record<string, unknown>;
+      }
+  )[];
   is_premium: boolean;
   views: number;
   created_at: string;

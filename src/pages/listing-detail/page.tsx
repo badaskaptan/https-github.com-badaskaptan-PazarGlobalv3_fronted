@@ -50,22 +50,63 @@ export default function ListingDetailPage() {
       if (error) throw error;
 
       if (data) {
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        
-        // ✅ images JSON array'inden URL'leri oluştur
+        const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+        const bucketBase = supabaseUrl
+          ? `${supabaseUrl}/storage/v1/object/public/product-images`
+          : '';
+
+        const toAbsoluteUrl = (value: string) => {
+          if (/^https?:\/\//i.test(value)) {
+            return value;
+          }
+          if (!bucketBase) {
+            return value;
+          }
+          const sanitized = value.replace(/^\/+/, '');
+          return `${bucketBase}/${sanitized}`;
+        };
+
+        const resolveImageUrl = (entry: unknown): string | null => {
+          if (!entry) {
+            return null;
+          }
+          if (typeof entry === 'string') {
+            const trimmed = entry.trim();
+            return trimmed ? toAbsoluteUrl(trimmed) : null;
+          }
+          if (typeof entry === 'object') {
+            const typed = entry as {
+              image_url?: string;
+              public_url?: string;
+              url?: string;
+              path?: string;
+            };
+            const candidate = typed.image_url || typed.public_url || typed.url || typed.path;
+            if (candidate && typeof candidate === 'string' && candidate.trim()) {
+              return toAbsoluteUrl(candidate.trim());
+            }
+          }
+          return null;
+        };
+
         let imageUrls: string[] = [];
-        
-        if (data.images && Array.isArray(data.images) && data.images.length > 0) {
-          // images array'i varsa, path'lerden URL oluştur
-          imageUrls = data.images.map((imagePath: string) => 
-            `${supabaseUrl}/storage/v1/object/public/product-images/${imagePath}`
-          );
-        } else if (data.image_url) {
-          // images array'i yoksa, image_url'yi kullan
-          imageUrls = [data.image_url];
-        } else {
-          // Hiçbiri yoksa placeholder
-          imageUrls = ['https://readdy.ai/api/search-image?query=product%20placeholder%20simple%20clean%20background&width=800&height=600&seq=placeholder&orientation=landscape'];
+        if (Array.isArray(data.images) && data.images.length > 0) {
+          imageUrls = data.images
+            .map(resolveImageUrl)
+            .filter((url): url is string => Boolean(url));
+        }
+
+        if (imageUrls.length === 0 && data.image_url) {
+          const fallback = resolveImageUrl(data.image_url);
+          if (fallback) {
+            imageUrls = [fallback];
+          }
+        }
+
+        if (imageUrls.length === 0) {
+          imageUrls = [
+            'https://readdy.ai/api/search-image?query=product%20placeholder%20simple%20clean%20background&width=800&height=600&seq=placeholder&orientation=landscape',
+          ];
         }
 
         console.log('📸 Resim URL\'leri:', imageUrls);
