@@ -5,6 +5,7 @@ import TopNavigation from '../../components/feature/TopNavigation';
 import Footer from '../home/components/Footer';
 import ChatBox from '../../components/feature/ChatBox';
 import { supabase } from '../../lib/supabase';
+import { generateListingKeywordsFallback } from '../../lib/listingKeywords';
 import { useAuthStore } from '../../stores/authStore';
 import { fetchCategoryOptions } from '../../services/agentApi';
 import { FALLBACK_CATEGORY_OPTIONS } from '../../constants/categories';
@@ -706,12 +707,51 @@ export default function CreateListingPage() {
 
       const dbCondition = conditionMap[formData.condition] || 'used';
 
-      // ✅ Metadata oluştur (WhatsApp agent için)
+      // Keywords: best-effort LLM via Edge Function, fallback to deterministic.
+      let kw = generateListingKeywordsFallback({
+        title: formData.title,
+        category: formData.category,
+        description: formData.description,
+        condition: dbCondition,
+      });
+      let keywordSource: 'llm' | 'fallback' = 'fallback';
+
+      const llmKeywordsEnabled = (import.meta as any)?.env?.VITE_ENABLE_LLM_KEYWORDS === 'true';
+      if (llmKeywordsEnabled) {
+        try {
+          const { data: aiData, error: aiError } = await supabase.functions.invoke('ai-assistant', {
+            body: {
+              action: 'generate_keywords',
+              category: formData.category,
+              title: formData.title,
+              description: formData.description,
+              condition: dbCondition,
+            },
+          });
+
+          if (!aiError && aiData?.success && aiData?.result?.keywords?.length) {
+            kw = {
+              keywords: aiData.result.keywords,
+              keywords_text: aiData.result.keywords_text || aiData.result.keywords.join(' '),
+            };
+            keywordSource = 'llm';
+          }
+        } catch (err) {
+          console.warn('AI keyword üretimi başarısız, fallback kullanılıyor:', err);
+        }
+      }
+
+      // ✅ Metadata (PII yok): provenance + search
       const metadata = {
         source: 'web',
         created_via: 'manual',
-        user_agent: navigator.userAgent,
-        created_at: new Date().toISOString()
+        client_app: 'pazarglobal-frontend',
+        flow_version: '2026-01-04',
+        keyword_source: keywordSource,
+        created_at_client: new Date().toISOString(),
+        keywords: kw.keywords,
+        keywords_text: kw.keywords_text,
+        attributes: {},
       };
 
       const { data, error } = await supabase

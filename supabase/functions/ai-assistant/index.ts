@@ -41,10 +41,94 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     let prompt = '';
-    const systemPrompt = 'Sen profesyonel bir ilan yazma uzmanısın. Türkiye pazarına özel, çekici ve satış odaklı içerikler üretiyorsun.';
+    let systemPrompt = 'Sen profesyonel bir ilan yazma uzmanısın. Türkiye pazarına özel, çekici ve satış odaklı içerikler üretiyorsun.';
+    let expectsJsonResult = false;
+    let maxTokens = 500;
+    let temperature = 0.7;
+
+    const sanitizeKeywords = (keywords: unknown, fallbackText: string): { keywords: string[]; keywords_text: string } => {
+      const list = Array.isArray(keywords) ? keywords : [];
+      const cleaned = list
+        .map((k) => (typeof k === 'string' ? k.trim().toLowerCase() : ''))
+        .filter(Boolean)
+        .map((k) => k.replace(/[^0-9a-zçğıöşü+\s-]/gi, ''))
+        .map((k) => k.trim())
+        .filter(Boolean);
+      const seen = new Set<string>();
+      const deduped: string[] = [];
+      for (const k of cleaned) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        deduped.push(k);
+        if (deduped.length >= 20) break;
+      }
+      const keywords_text = deduped.join(' ');
+      return {
+        keywords: deduped,
+        keywords_text: keywords_text || (fallbackText || '').trim(),
+      };
+    };
+
+    const tryParseJsonObject = (text: string): any | null => {
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        // try to extract first JSON object
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          const sliced = text.slice(start, end + 1);
+          try {
+            return JSON.parse(sliced);
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      }
+    };
 
     // Action'a göre prompt oluştur
     switch (action) {
+      case 'generate_keywords':
+        if (!title || title.trim().length < 2) {
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              error: 'Lütfen önce ürün başlığını yazın.' 
+            }),
+            { 
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              status: 400 
+            }
+          );
+        }
+
+        expectsJsonResult = true;
+        maxTokens = 250;
+        temperature = 0.2;
+        systemPrompt =
+          'Sen bir ilan arama indeksleme uzmanısın. Görevin arama için anahtar kelimeler üretmek. PII üretme (telefon, isim, adres, e-posta). Sadece ürün/kategori/özellik odaklı anahtar kelimeler üret.';
+
+        prompt = `Aşağıdaki ilan için arama anahtar kelimeleri üret.
+
+Veriler:
+- Kategori: ${category || ''}
+- Başlık: ${title}
+- Açıklama: ${description || ''}
+- Durum: ${condition || ''}
+
+Kurallar:
+- Sadece JSON döndür, başka hiçbir metin yazma.
+- Şema: {"keywords": ["..."], "keywords_text": "..."}
+- keywords: 10-20 adet, küçük harf, kısa (1-3 kelime), tekrar yok.
+- Geniş aramalar için 2-4 adet genel kategori kelimesi ekle (örn otomotiv/araba/araç, telefon/akıllı telefon).
+- Marka/model/özellik/ölçü (örn 2+1, 128gb, i7) gibi ifadeleri dahil et.
+- PII yok: isim, telefon, adres, whatsapp, kullanıcı bilgisi YAZMA.
+`;
+        break;
+
       case 'suggest_title':
         if (!title || title.trim().length < 2) {
           return new Response(
@@ -429,8 +513,8 @@ Kurallar:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.7,
-        max_tokens: 500,
+        temperature,
+        max_tokens: maxTokens,
       }),
     });
 
@@ -451,6 +535,26 @@ Kurallar:
     const result = data.choices[0]?.message?.content?.trim() || '';
 
     console.log('AI Response:', result);
+
+    if (expectsJsonResult) {
+      const parsed = tryParseJsonObject(result);
+      const keywords = parsed?.keywords;
+      const keywordsText = typeof parsed?.keywords_text === 'string' ? parsed.keywords_text : '';
+      const sanitized = sanitizeKeywords(keywords, keywordsText);
+
+      // If model returned nothing useful, treat as failure so caller can fallback.
+      if (!sanitized.keywords || sanitized.keywords.length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'AI keyword üretimi başarısız' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, result: sanitized }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     return new Response(
       JSON.stringify({ success: true, result }),

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { generateListingKeywordsFallback } from './listingKeywords';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -143,11 +144,75 @@ export const listingHelpers = {
       return { data: null, error: new Error('Kullanıcı girişi gerekli') };
     }
 
+    // Best-effort: keep listing cards consistent (user_name/user_phone)
+    let userName = 'Satıcı';
+    let userPhone = '';
+    try {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('phone, full_name')
+        .eq('id', user.id)
+        .single();
+      userPhone = profileData?.phone || '';
+      userName = profileData?.full_name || 'Satıcı';
+    } catch {
+      // ignore
+    }
+
+    // Keywords: best-effort LLM via Edge Function, fallback to deterministic.
+    let kw = generateListingKeywordsFallback({
+      title: listing.title,
+      category: listing.category,
+      description: listing.description,
+      condition: listing.condition,
+    });
+    let keywordSource: 'llm' | 'fallback' = 'fallback';
+
+    const llmKeywordsEnabled = (import.meta as any)?.env?.VITE_ENABLE_LLM_KEYWORDS === 'true';
+    if (llmKeywordsEnabled) {
+      try {
+        const { data: aiData, error: aiError } = await supabase.functions.invoke('ai-assistant', {
+          body: {
+            action: 'generate_keywords',
+            category: listing.category,
+            title: listing.title,
+            description: listing.description,
+            condition: listing.condition,
+          },
+        });
+
+        if (!aiError && aiData?.success && aiData?.result?.keywords?.length) {
+          kw = {
+            keywords: aiData.result.keywords,
+            keywords_text: aiData.result.keywords_text || aiData.result.keywords.join(' '),
+          };
+          keywordSource = 'llm';
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const metadata = {
+      source: 'web',
+      created_via: 'manual',
+      client_app: 'pazarglobal-frontend',
+      flow_version: '2026-01-04',
+      keyword_source: keywordSource,
+      created_at_client: new Date().toISOString(),
+      keywords: kw.keywords,
+      keywords_text: kw.keywords_text,
+      attributes: {},
+    };
+
     const { data, error } = await supabase
       .from('listings')
       .insert({
         ...listing,
         user_id: user.id,
+        user_name: userName,
+        user_phone: userPhone,
+        metadata,
         status: 'active',
         view_count: 0,
       })
