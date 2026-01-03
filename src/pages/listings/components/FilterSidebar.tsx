@@ -1,33 +1,14 @@
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { FilterState } from '../../../types/listing';
+import { fetchCategoryOptions } from '../../../services/agentApi';
+import { FALLBACK_CATEGORY_OPTIONS, getCategoryIcon } from '../../../constants/categories';
 
 interface FilterSidebarProps {
   filters: FilterState;
   onFilterChange: (filters: Partial<FilterState>) => void;
 }
 
-const categories = [
-  { id: 'Elektronik', name: 'Elektronik', icon: 'ri-smartphone-line' },
-  { id: 'Otomotiv', name: 'Otomotiv', icon: 'ri-car-line' },
-  { id: 'Emlak', name: 'Emlak', icon: 'ri-home-4-line' },
-  { id: 'Mobilya & Dekorasyon', name: 'Mobilya & Dekorasyon', icon: 'ri-sofa-line' },
-  { id: 'Giyim & Aksesuar', name: 'Giyim & Aksesuar', icon: 'ri-shirt-line' },
-  { id: 'Gıda & İçecek', name: 'Gıda & İçecek', icon: 'ri-restaurant-line' },
-  { id: 'Kozmetik & Kişisel Bakım', name: 'Kozmetik & Kişisel Bakım', icon: 'ri-heart-pulse-line' },
-  { id: 'Kozmetik & Bakım', name: 'Kozmetik & Bakım', icon: 'ri-heart-pulse-line' },
-  { id: 'Kitap, Dergi & Müzik', name: 'Kitap, Dergi & Müzik', icon: 'ri-book-line' },
-  { id: 'Spor & Outdoor', name: 'Spor & Outdoor', icon: 'ri-basketball-line' },
-  { id: 'Anne, Bebek & Oyuncak', name: 'Anne, Bebek & Oyuncak', icon: 'ri-bear-smile-line' },
-  { id: 'Hayvan & Pet Shop', name: 'Hayvan & Pet Shop', icon: 'ri-footprint-line' },
-  { id: 'Yapı Market & Bahçe', name: 'Yapı Market & Bahçe', icon: 'ri-hammer-line' },
-  { id: 'Hobi & Oyun', name: 'Hobi & Oyun', icon: 'ri-gamepad-line' },
-  { id: 'Sanat & Zanaat', name: 'Sanat & Zanaat', icon: 'ri-palette-line' },
-  { id: 'İş & Sanayi', name: 'İş & Sanayi', icon: 'ri-building-line' },
-  { id: 'Eğitim & Kurs', name: 'Eğitim & Kurs', icon: 'ri-graduation-cap-line' },
-  { id: 'Etkinlik & Bilet', name: 'Etkinlik & Bilet', icon: 'ri-ticket-line' },
-  { id: 'Hizmetler', name: 'Hizmetler', icon: 'ri-service-line' },
-  { id: 'Diğer', name: 'Diğer', icon: 'ri-more-line' },
-];
 
 const conditions = [
   { id: 'sifir', name: 'Sıfır' },
@@ -43,6 +24,30 @@ const dateRanges = [
 ];
 
 export default function FilterSidebar({ filters, onFilterChange }: FilterSidebarProps) {
+  const [categoryOptions, setCategoryOptions] = useState(FALLBACK_CATEGORY_OPTIONS);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const opts = await fetchCategoryOptions();
+        if (mounted && Array.isArray(opts) && opts.length > 0) {
+          setCategoryOptions(opts);
+        }
+      } catch {
+        // keep fallback
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const categories = useMemo(
+    () => categoryOptions.map((opt) => ({ id: opt.id, name: opt.label, icon: getCategoryIcon(opt.id) })),
+    [categoryOptions]
+  );
+
   const toggleCategory = (categoryId: string) => {
     const newCategories = filters.categories.includes(categoryId)
       ? filters.categories.filter(c => c !== categoryId)
@@ -158,6 +163,8 @@ export default function FilterSidebar({ filters, onFilterChange }: FilterSidebar
           value={filters.dateRange}
           onChange={(e) => onFilterChange({ dateRange: e.target.value })}
           className="w-full px-4 py-3 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer"
+          aria-label="İlan tarihi filtresi"
+          title="İlan tarihi"
         >
           {dateRanges.map(range => (
             <option key={range.id} value={range.id}>

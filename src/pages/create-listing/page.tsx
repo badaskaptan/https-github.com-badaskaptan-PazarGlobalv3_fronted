@@ -6,6 +6,8 @@ import Footer from '../home/components/Footer';
 import ChatBox from '../../components/feature/ChatBox';
 import { supabase } from '../../lib/supabase';
 import { useAuthStore } from '../../stores/authStore';
+import { fetchCategoryOptions } from '../../services/agentApi';
+import { FALLBACK_CATEGORY_OPTIONS } from '../../constants/categories';
 
 type FormData = {
   title: string;
@@ -15,17 +17,6 @@ type FormData = {
   condition: string;
   location: string;
 };
-
-const categories = [
-  'Otomotiv',
-  'Elektronik',
-  'Ev & Yaşam',
-  'Moda & Aksesuar',
-  'Spor & Outdoor',
-  'Kitap & Hobi',
-  'Mobilya',
-  'Diğer'
-];
 
 const conditions = [
   'Sıfır',
@@ -141,6 +132,24 @@ const compressImage = async (file: File, maxSizeMB: number = 0.9): Promise<File>
 };
 
 export default function CreateListingPage() {
+  const [categories, setCategories] = useState(FALLBACK_CATEGORY_OPTIONS);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const opts = await fetchCategoryOptions();
+        if (mounted && Array.isArray(opts) && opts.length > 0) {
+          setCategories(opts);
+        }
+      } catch {
+        // Keep fallback list
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
   const navigate = useNavigate();
   const [isScrolled] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1003,8 +1012,10 @@ export default function CreateListingPage() {
                   title="Kategori seçin"
                 >
                   <option value="">Kategori Seçin</option>
-                  {categories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.label}
+                    </option>
                   ))}
                 </select>
                 {errors.category && <p className="text-red-500 text-xs mt-1">{errors.category}</p>}
