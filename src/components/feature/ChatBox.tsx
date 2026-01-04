@@ -373,6 +373,11 @@ export default function ChatBox() {
       if (assistantText) {
         commitAssistantResponse(assistantText, undefined, json.data?.listings);
       }
+
+      // The backend /webchat/media/analyze endpoint already persists these media URLs into
+      // the draft/session. Clear pending media so we don't resend the same URLs on the next
+      // text message (which causes duplicated image counters / flow confusion).
+      clearPendingMedia();
       return true;
     } catch (err) {
       console.error('Media analysis request failed:', err);
@@ -1068,9 +1073,12 @@ export default function ChatBox() {
                                       },
                                       img({ src, alt, ...props }: any) {
                                         return (
-                                          <div className="my-2">
-                                            <img src={src || ''} alt={alt || ''} className="rounded-lg max-h-64 w-full object-cover" {...props} />
-                                          </div>
+                                          <img
+                                            src={src || ''}
+                                            alt={alt || ''}
+                                            className="my-2 rounded-lg max-h-64 w-full object-cover"
+                                            {...props}
+                                          />
                                         );
                                       },
                                     }}
