@@ -62,7 +62,9 @@ async function fetchDirect(filters: FilterState): Promise<DBListing[]> {
     let query = supabase
       .from('listings')
       .select('*')
-      .eq('status', 'active'); // Only active listings
+      // Some environments have legacy rows with NULL or 'published' status.
+      // Treat them as visible so the UI doesn't silently drop listings.
+      .or('status.eq.active,status.eq.published,status.is.null');
 
     // Category filter
     if (filters.categories && filters.categories.length > 0) {
@@ -167,7 +169,7 @@ export async function fetchListingById(id: string): Promise<DBListing | null> {
       .from('listings')
       .select('*')
       .eq('id', id)
-      .eq('status', 'active')
+      .or('status.eq.active,status.eq.published,status.is.null')
       .single();
 
     if (error) {

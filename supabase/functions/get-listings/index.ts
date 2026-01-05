@@ -106,7 +106,9 @@ serve(async (req) => {
     let query = supabase
       .from('listings')
       .select('*')
-      .eq('status', 'active');
+      // Some environments have legacy rows with NULL or 'published' status.
+      // Keep them visible so the UI doesn't silently drop listings.
+      .or('status.eq.active,status.eq.published,status.is.null');
 
     // Kategori filtresi (array support)
     if (categories && Array.isArray(categories) && categories.length > 0) {
