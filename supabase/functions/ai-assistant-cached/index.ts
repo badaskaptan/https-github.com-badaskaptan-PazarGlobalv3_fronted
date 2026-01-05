@@ -6,6 +6,80 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(Math.max(v, 0), 1);
+}
+
+function normalizeForMatch(text: unknown): string {
+  if (typeof text !== 'string') return '';
+  const turkishMap: Record<string, string> = {
+    'ç': 'c', 'Ç': 'c',
+    'ğ': 'g', 'Ğ': 'g',
+    'ı': 'i', 'I': 'i', 'İ': 'i',
+    'ö': 'o', 'Ö': 'o',
+    'ş': 's', 'Ş': 's',
+    'ü': 'u', 'Ü': 'u'
+  };
+  let normalized = text;
+  for (const [tr, en] of Object.entries(turkishMap)) {
+    normalized = normalized.replace(new RegExp(tr, 'g'), en);
+  }
+  return normalized.toLowerCase();
+}
+
+function computeEvidenceFactor(args: {
+  vision?: any;
+  userClaim?: string;
+}): { factor: number; reasons: string[] } {
+  const reasons: string[] = [];
+  const user = normalizeForMatch(args.userClaim || '');
+  const visionCondition = normalizeForMatch(args.vision?.condition || '');
+  const visionProduct = normalizeForMatch(args.vision?.product || '');
+  const visionCategory = normalizeForMatch(args.vision?.category || '');
+  const hasVision = Boolean(visionCondition || visionProduct || visionCategory);
+  const hasUser = Boolean(user.trim());
+
+  if (!hasVision || !hasUser) {
+    return { factor: 1.0, reasons };
+  }
+
+  // User-reported issues that materially change pricing context.
+  const severeDamageTokens = [
+    'agir hasar',
+    'ağir hasar',
+    'ağır hasar',
+    'hasar kaydi',
+    'hasar kaydı',
+    'tramer',
+    'pert',
+    'sase',
+    'şase',
+    'motor ariza',
+    'motor arıza',
+    'calismiyor',
+    'çalışmıyor',
+    'kaza',
+  ];
+  const userSaysSevereDamage = severeDamageTokens.some(t => user.includes(normalizeForMatch(t)));
+
+  // Vision often outputs generic buckets like "İyi Durumda"; treat these as "looks good".
+  const visionLooksGood = ['sifir', 'az kullan', 'iyi durum'].some(t => visionCondition.includes(normalizeForMatch(t)));
+
+  if (userSaysSevereDamage && visionLooksGood) {
+    reasons.push('user_reports_damage_vs_vision_looks_good');
+    return { factor: 0.75, reasons };
+  }
+
+  // If user provides detailed caveats (even if not conflicting), keep a slight penalty: price variance tends to be higher.
+  if (userSaysSevereDamage) {
+    reasons.push('user_reports_damage');
+    return { factor: 0.90, reasons };
+  }
+
+  return { factor: 1.0, reasons };
+}
+
 // 🔑 Product Key Normalizasyon (inline)
 function normalizeProductKey(title: string, category: string): string {
   const turkishMap: { [key: string]: string } = {
@@ -52,9 +126,9 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { action, category, title, description, condition } = await req.json();
+    const { action, category, title, description, condition, vision, user_claim } = await req.json();
 
-    console.log('📦 Request:', { action, category, title, description, condition });
+    console.log('📦 Request:', { action, category, title, description, condition, has_vision: !!vision, has_user_claim: !!user_claim });
 
     if (action !== 'suggest_price') {
       return new Response(
@@ -114,11 +188,17 @@ serve(async (req: Request) => {
         const multiplier = conditionMultipliers[condition || 'İyi Durumda'] || 0.70;
         const finalPrice = Math.round(cachedData.avg_price * multiplier);
 
+        const evidence = computeEvidenceFactor({ vision, userClaim: typeof user_claim === 'string' ? user_claim : '' });
+        const baseConfidence = Number(cachedData.confidence) || 0;
+        const adjustedConfidence = clamp01(baseConfidence * evidence.factor);
+
         const explanation = `🌐 GÜNCEL PİYASA VERİSİ (Önbellek):\n\n` +
           `📊 Fiyat Aralığı: ${cachedData.min_price.toLocaleString('tr-TR')} - ${cachedData.max_price.toLocaleString('tr-TR')} ₺\n` +
           `📈 Piyasa Ortalaması: ${cachedData.avg_price.toLocaleString('tr-TR')} ₺\n` +
           `⚙️ Durum Katsayısı: ${condition || 'İyi Durumda'} (×${multiplier})\n` +
-          `🎯 Güven Skoru: ${(cachedData.confidence * 100).toFixed(0)}%\n\n` +
+          `🎯 Güven Skoru: ${(adjustedConfidence * 100).toFixed(0)}%` +
+          (evidence.factor !== 1.0 ? ` (kanıt uyumu ×${evidence.factor})` : '') +
+          `\n\n` +
           `💰 ÖNERİLEN SATIŞ FİYATI: ${finalPrice.toLocaleString('tr-TR')} ₺\n\n` +
           `📅 Son Güncelleme: ${new Date(cachedData.last_updated_at).toLocaleDateString('tr-TR')}\n` +
           `✅ Veriler ${cachedData.sources.length} farklı kaynaktan toplanmıştır.`;
@@ -129,7 +209,10 @@ serve(async (req: Request) => {
             result: explanation,
             price: finalPrice,
             cached: true,
-            confidence: cachedData.confidence
+            confidence: adjustedConfidence,
+            base_confidence: baseConfidence,
+            evidence_factor: evidence.factor,
+            evidence_reasons: evidence.reasons
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -355,9 +438,16 @@ KURALLAR:
       `📊 Güncel Fiyat Aralığı: ${minPrice.toLocaleString('tr-TR')} - ${maxPrice.toLocaleString('tr-TR')} ₺\n` +
       `📈 Piyasa Ortalaması: ${avgPrice.toLocaleString('tr-TR')} ₺\n` +
       `⚙️ Durum Katsayısı: ${condition || 'İyi Durumda'} (×${multiplier})\n` +
-      `🎯 Güven Skoru: ${(confidence * 100).toFixed(0)}%\n\n` +
+      (() => {
+        const evidence = computeEvidenceFactor({ vision, userClaim: typeof user_claim === 'string' ? user_claim : '' });
+        const adjustedConfidence = clamp01(confidence * evidence.factor);
+        return `🎯 Güven Skoru: ${(adjustedConfidence * 100).toFixed(0)}%` + (evidence.factor !== 1.0 ? ` (kanıt uyumu ×${evidence.factor})` : '') + `\n\n`;
+      })() +
       `💰 ÖNERİLEN SATIŞ FİYATI: ${finalPrice.toLocaleString('tr-TR')} ₺\n\n` +
       `✅ Bu fiyat ${sources.length} farklı e-ticaret sitesinden alınan güncel verilere dayanmaktadır.`;
+
+    const evidence = computeEvidenceFactor({ vision, userClaim: typeof user_claim === 'string' ? user_claim : '' });
+    const adjustedConfidence = clamp01(confidence * evidence.factor);
 
     return new Response(
       JSON.stringify({ 
@@ -365,7 +455,10 @@ KURALLAR:
         result: explanation,
         price: finalPrice,
         cached: false,
-        confidence: confidence
+        confidence: adjustedConfidence,
+        base_confidence: clamp01(confidence),
+        evidence_factor: evidence.factor,
+        evidence_reasons: evidence.reasons
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

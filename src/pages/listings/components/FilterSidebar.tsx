@@ -11,9 +11,9 @@ interface FilterSidebarProps {
 
 
 const conditions = [
-  { id: 'sifir', name: 'Sıfır' },
-  { id: 'az-kullanilmis', name: 'Az Kullanılmış' },
-  { id: 'kullanilmis', name: 'Kullanılmış' },
+  { id: 'Sıfır', name: 'Sıfır' },
+  { id: '2. El', name: '2. El' },
+  { id: 'Az Kullanılmış', name: 'Az Kullanılmış' },
 ];
 
 const dateRanges = [

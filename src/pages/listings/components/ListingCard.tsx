@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import type { Listing } from '../../../types/listing';
+import { toCanonicalCondition } from '../../../lib/condition';
 
 interface ListingCardProps {
   listing: Listing;
@@ -74,7 +75,7 @@ export default function ListingCard({ listing, viewMode, index }: ListingCardPro
                   {listing.category}
                 </span>
                 <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
-                  {listing.condition}
+                  {toCanonicalCondition(listing.condition) || listing.condition}
                 </span>
               </div>
             </div>
@@ -139,7 +140,7 @@ export default function ListingCard({ listing, viewMode, index }: ListingCardPro
             {listing.price.toLocaleString('tr-TR')} ₺
           </div>
           <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
-            {listing.condition}
+            {toCanonicalCondition(listing.condition) || listing.condition}
           </span>
         </div>
 

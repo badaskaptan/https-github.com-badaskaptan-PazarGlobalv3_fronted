@@ -6,6 +6,7 @@ import Footer from '../home/components/Footer';
 import ChatBox from '../../components/feature/ChatBox';
 import { supabase } from '../../lib/supabase';
 import { generateListingKeywordsFallback } from '../../lib/listingKeywords';
+import { toCanonicalCondition } from '../../lib/condition';
 import { useAuthStore } from '../../stores/authStore';
 import { fetchCategoryOptions } from '../../services/agentApi';
 import { FALLBACK_CATEGORY_OPTIONS } from '../../constants/categories';
@@ -21,9 +22,8 @@ type FormData = {
 
 const conditions = [
   'Sıfır',
-  'Az Kullanılmış',
-  'İyi Durumda',
-  'Orta Durumda'
+  '2. El',
+  'Az Kullanılmış'
 ];
 
 // AI Suggestions based on category
@@ -277,7 +277,7 @@ export default function CreateListingPage() {
           action: 'suggest_title',
           category: formData.category,
           title: formData.title,
-          condition: formData.condition || 'used'
+          condition: toCanonicalCondition(formData.condition) || '2. El'
         }
       });
 
@@ -698,14 +698,7 @@ export default function CreateListingPage() {
         return data.publicUrl;
       });
 
-      const conditionMap: { [key: string]: string } = {
-        'Sıfır': 'new',
-        'Az Kullanılmış': 'used',
-        'İyi Durumda': 'used',
-        'Orta Durumda': 'used'
-      };
-
-      const dbCondition = conditionMap[formData.condition] || 'used';
+      const dbCondition = toCanonicalCondition(formData.condition) || '2. El';
 
       // Keywords: best-effort LLM via Edge Function, fallback to deterministic.
       let kw = generateListingKeywordsFallback({

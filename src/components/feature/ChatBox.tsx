@@ -14,6 +14,7 @@ import 'swiper/css';
 import 'swiper/css/pagination';
 import 'swiper/css/navigation';
 import './ChatBox.css';
+import { conditionBadgeClass, toCanonicalCondition } from '../../lib/condition';
 
 type Message = {
   id: string;
@@ -702,14 +703,12 @@ export default function ChatBox() {
               )}
               
               {listing.condition && (
-                <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full ${
-                  listing.condition === 'new' 
-                    ? 'bg-green-100 text-green-700'
-                    : listing.condition === 'used'
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'bg-gray-100 text-gray-700'
-                }`}>
-                  {listing.condition === 'new' ? 'Sıfır' : listing.condition === 'used' ? '2. El' : 'Yenilenmiş'}
+                <span
+                  className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full ${conditionBadgeClass(
+                    listing.condition
+                  )}`}
+                >
+                  {toCanonicalCondition(listing.condition)}
                 </span>
               )}
 

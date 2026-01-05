@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { FilterState } from '../types/listing';
+import { expandConditionFilter } from '../lib/condition';
 
 // Database listing type (from Supabase)
 export interface DBListing {
@@ -134,17 +135,22 @@ async function fetchDirect(filters: FilterState): Promise<DBListing[]> {
  */
 export async function fetchListingsWithFilters(filters: FilterState): Promise<DBListing[]> {
   try {
+    const normalizedFilters: FilterState = {
+      ...filters,
+      condition: expandConditionFilter(filters.condition || []),
+    };
+
     if (USE_EDGE_FUNCTIONS) {
       try {
         console.log('🚀 Fetching via Edge function...');
-        return await fetchViaEdge(filters);
+        return await fetchViaEdge(normalizedFilters);
       } catch (edgeError) {
         console.warn('⚠️ Edge function failed, falling back to direct:', edgeError);
-        return await fetchDirect(filters);
+        return await fetchDirect(normalizedFilters);
       }
     } else {
       console.log('📡 Fetching directly (Edge functions disabled)');
-      return await fetchDirect(filters);
+      return await fetchDirect(normalizedFilters);
     }
   } catch (error) {
     console.error('Error fetching listings:', error);

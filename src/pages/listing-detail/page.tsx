@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import TopNavigation from '../../components/feature/TopNavigation';
 import Footer from '../home/components/Footer';
 import ChatBox from '../../components/feature/ChatBox';
+import { toCanonicalCondition } from '../../lib/condition';
 import { supabase } from '../../lib/supabase';
 
 interface ListingDetail {
@@ -273,7 +274,7 @@ export default function ListingDetailPage() {
                     {listing.category}
                   </span>
                   <span className="px-4 py-2 bg-green-100 text-green-700 text-sm font-medium rounded-full">
-                    {listing.condition}
+                    {toCanonicalCondition(listing.condition) || listing.condition}
                   </span>
                   <span className="px-4 py-2 bg-blue-100 text-blue-700 text-sm font-medium rounded-full flex items-center space-x-1">
                     <i className="ri-map-pin-line" />
