@@ -30,6 +30,7 @@ export default function ManageListingsPage() {
   const [success, setSuccess] = useState('');
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedListing, setSelectedListing] = useState<DBListing | null>(null);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [formState, setFormState] = useState({
     title: '',
     description: '',
@@ -372,14 +373,39 @@ export default function ManageListingsPage() {
               <h1 className="text-4xl font-display font-bold text-gray-900 mb-2">
                 <span className="bg-gradient-primary bg-clip-text text-transparent">İlanlarım</span>
               </h1>
-              <p className="text-gray-600">İlanlarınızı düzenleyin, yeniden yayınlayın veya silin</p>
+              <p className="text-gray-600">{listings.length} ilan bulundu</p>
             </div>
-            <button
-              onClick={() => navigate('/create-listing')}
-              className="px-6 py-3 bg-gradient-primary text-white font-semibold rounded-full shadow-lg hover:shadow-xl transition-all whitespace-nowrap cursor-pointer"
-            >
-              Yeni İlan Oluştur
-            </button>
+            <div className="flex items-center gap-3">
+              {/* View Mode Toggle */}
+              <div className="flex items-center bg-white rounded-full shadow-md p-1">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+                    viewMode === 'grid' ? 'bg-gradient-primary text-white' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  aria-label="Izgara görünümü"
+                  title="Izgara görünümü"
+                >
+                  <i className="ri-grid-line text-lg" />
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+                    viewMode === 'list' ? 'bg-gradient-primary text-white' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                  aria-label="Liste görünümü"
+                  title="Liste görünümü"
+                >
+                  <i className="ri-list-check text-lg" />
+                </button>
+              </div>
+              <button
+                onClick={() => navigate('/create-listing')}
+                className="px-6 py-3 bg-gradient-primary text-white font-semibold rounded-full shadow-lg hover:shadow-xl transition-all whitespace-nowrap cursor-pointer"
+              >
+                Yeni İlan Oluştur
+              </button>
+            </div>
           </div>
 
           {(error || success) && (
@@ -408,58 +434,116 @@ export default function ManageListingsPage() {
               </button>
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className={viewMode === 'grid' ? 'grid md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-5'}>
               {listings.map(listing => (
-                <div key={listing.id} className="bg-white rounded-3xl shadow-lg p-6 flex flex-col md:flex-row gap-6">
-                  <div className="w-full md:w-48 h-40 rounded-2xl overflow-hidden bg-gray-100">
-                    <img
-                      src={primaryImage(listing)}
-                      alt={listing.title}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="flex-1 grid gap-4">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full">
-                          {listing.category || 'Kategori Yok'}
-                        </span>
-                        <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
-                          {toCanonicalCondition(listing.condition) || listing.condition || '2. El'}
-                        </span>
-                        <span className="text-xs text-gray-500">{formatDate(listing.created_at)}</span>
-                      </div>
-                      <h3 className="text-2xl font-bold text-gray-900">{listing.title}</h3>
-                      <p className="text-gray-600 line-clamp-2">{listing.description || 'Açıklama eklenmemiş'}</p>
-                    </div>
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                      <div className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-                        {(listing.price ?? 0).toLocaleString('tr-TR')} ₺
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        <button
-                          onClick={() => navigate(`/listing/${listing.id}`)}
-                          className="px-4 py-2 rounded-full border border-gray-200 text-gray-600 hover:border-gray-400 transition-all cursor-pointer"
-                        >
-                          İlanı Gör
-                        </button>
+                viewMode === 'grid' ? (
+                  // Grid View (Kart Görünümü)
+                  <div key={listing.id} className="bg-white rounded-3xl shadow-lg overflow-hidden group hover:shadow-xl transition-all">
+                    <div className="relative h-56 bg-gray-100 overflow-hidden">
+                      <img
+                        src={primaryImage(listing)}
+                        alt={listing.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <div className="absolute top-3 right-3 flex flex-col gap-2">
                         <button
                           onClick={() => openEditModal(listing)}
-                          className="px-4 py-2 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all cursor-pointer"
+                          className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-all cursor-pointer flex items-center justify-center shadow-lg"
+                          title="Düzenle"
                         >
-                          Düzenle
+                          <i className="ri-edit-line text-lg" />
                         </button>
                         <button
                           onClick={() => handleDelete(listing.id)}
                           disabled={deletingId === listing.id}
-                          className="px-4 py-2 rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-10 h-10 rounded-full bg-red-500 text-white hover:bg-red-600 transition-all cursor-pointer flex items-center justify-center shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Sil"
                         >
-                          {deletingId === listing.id ? 'Siliniyor...' : 'Sil'}
+                          <i className={deletingId === listing.id ? 'ri-loader-4-line animate-spin text-lg' : 'ri-delete-bin-line text-lg'} />
                         </button>
+                      </div>
+                      <div className="absolute bottom-3 left-3 flex gap-2">
+                        <span className="px-3 py-1 bg-white/90 backdrop-blur-sm text-gray-700 text-xs font-semibold rounded-full">
+                          {listing.category || 'Kategori Yok'}
+                        </span>
+                        <span className="px-3 py-1 bg-green-500/90 backdrop-blur-sm text-white text-xs font-semibold rounded-full">
+                          {toCanonicalCondition(listing.condition) || listing.condition || '2. El'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-5">
+                      <h3 className="text-xl font-bold text-gray-900 mb-2 line-clamp-1">{listing.title}</h3>
+                      <p className="text-gray-600 text-sm line-clamp-2 mb-4">{listing.description || 'Açıklama eklenmemiş'}</p>
+                      <div className="flex items-center justify-between">
+                        <div className="text-2xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+                          {(listing.price ?? 0).toLocaleString('tr-TR')} ₺
+                        </div>
+                        <button
+                          onClick={() => navigate(`/listing/${listing.id}`)}
+                          className="px-4 py-2 rounded-full border border-gray-200 text-gray-600 hover:border-purple-500 hover:text-purple-600 transition-all cursor-pointer text-sm"
+                        >
+                          Detay
+                        </button>
+                      </div>
+                      <div className="mt-3 text-xs text-gray-500 flex items-center">
+                        <i className="ri-calendar-line mr-1" />
+                        {formatDate(listing.created_at)}
                       </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  // List View (Liste Görünümü)
+                  <div key={listing.id} className="bg-white rounded-3xl shadow-lg p-6 flex flex-col md:flex-row gap-6">
+                    <div className="w-full md:w-48 h-40 rounded-2xl overflow-hidden bg-gray-100 flex-shrink-0">
+                      <img
+                        src={primaryImage(listing)}
+                        alt={listing.title}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 grid gap-4">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full">
+                            {listing.category || 'Kategori Yok'}
+                          </span>
+                          <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">
+                            {toCanonicalCondition(listing.condition) || listing.condition || '2. El'}
+                          </span>
+                          <span className="text-xs text-gray-500">{formatDate(listing.created_at)}</span>
+                        </div>
+                        <h3 className="text-2xl font-bold text-gray-900">{listing.title}</h3>
+                        <p className="text-gray-600 line-clamp-2">{listing.description || 'Açıklama eklenmemiş'}</p>
+                      </div>
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+                          {(listing.price ?? 0).toLocaleString('tr-TR')} ₺
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            onClick={() => navigate(`/listing/${listing.id}`)}
+                            className="px-4 py-2 rounded-full border border-gray-200 text-gray-600 hover:border-gray-400 transition-all cursor-pointer"
+                          >
+                            İlanı Gör
+                          </button>
+                          <button
+                            onClick={() => openEditModal(listing)}
+                            className="px-4 py-2 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all cursor-pointer"
+                          >
+                            Düzenle
+                          </button>
+                          <button
+                            onClick={() => handleDelete(listing.id)}
+                            disabled={deletingId === listing.id}
+                            className="px-4 py-2 rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {deletingId === listing.id ? 'Siliniyor...' : 'Sil'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
               ))}
             </div>
           )}
