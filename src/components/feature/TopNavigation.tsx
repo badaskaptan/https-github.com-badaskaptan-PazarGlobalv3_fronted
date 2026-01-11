@@ -126,6 +126,17 @@ export default function TopNavigation({ isScrolled: isScrolledProp }: TopNavigat
                   İlan Ver
                 </button>
                 <button
+                  onClick={() => navigate('/profile/listings')}
+                  className={`font-medium transition-colors cursor-pointer whitespace-nowrap flex items-center gap-2 ${
+                    isScrolled || !isHomePage
+                      ? 'text-gray-700 hover:text-teal-600'
+                      : 'text-white hover:text-teal-200'
+                  }`}
+                >
+                  <i className="ri-folder-user-line text-xl"></i>
+                  <span className="hidden md:inline">İlanlarım</span>
+                </button>
+                <button
                   onClick={() => navigate('/profile')}
                   className={`font-medium transition-colors cursor-pointer whitespace-nowrap flex items-center gap-2 ${
                     isScrolled || !isHomePage
