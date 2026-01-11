@@ -1114,15 +1114,58 @@ export default function ChatBox() {
 
               {isTyping && (
                 <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="flex justify-start"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex justify-start items-start space-x-2"
                 >
-                  <div className="bg-white rounded-2xl px-4 py-3 shadow-md">
-                    <div className="flex space-x-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:200ms]" />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:400ms]" />
+                  <div className="w-8 h-8 rounded-full bg-gradient-primary flex items-center justify-center flex-shrink-0">
+                    <i className="ri-robot-2-fill text-white text-lg" />
+                  </div>
+                  <div className="bg-white rounded-2xl px-5 py-4 shadow-md">
+                    <div className="flex items-center space-x-3">
+                      {/* Animated magnifying glass icon */}
+                      <motion.div
+                        animate={{
+                          rotate: [0, 10, -10, 10, 0],
+                          scale: [1, 1.1, 1, 1.1, 1],
+                        }}
+                        transition={{
+                          duration: 2,
+                          repeat: Infinity,
+                          ease: "easeInOut"
+                        }}
+                        className="text-purple-600"
+                      >
+                        <i className="ri-search-line text-2xl" />
+                      </motion.div>
+                      
+                      {/* Loading text with dots animation */}
+                      <div className="flex items-center space-x-1">
+                        <span className="text-sm text-gray-700 font-medium">İlan aranıyor</span>
+                        <div className="flex space-x-1">
+                          <motion.span
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+                            className="text-gray-700"
+                          >
+                            .
+                          </motion.span>
+                          <motion.span
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 1.5, repeat: Infinity, delay: 0.2 }}
+                            className="text-gray-700"
+                          >
+                            .
+                          </motion.span>
+                          <motion.span
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 1.5, repeat: Infinity, delay: 0.4 }}
+                            className="text-gray-700"
+                          >
+                            .
+                          </motion.span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
