@@ -57,7 +57,8 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       // @ts-ignore - Deno global
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      // Support both SUPABASE_SERVICE_KEY and SUPABASE_SERVICE_ROLE_KEY
+      Deno.env.get('SUPABASE_SERVICE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
     const requestData: IncomingRequest = await req.json();
