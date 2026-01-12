@@ -273,9 +273,6 @@ Deno.serve(async (req: Request) => {
             end_reason: 'timeout'
           })
           .eq('id', activeSession.id);
-            user_id: activeSession.user_id,
-            session_token: activeSession.session_token,
-          })
         console.log('⏰ Session expired (10 min) - closed');
 
         return new Response(
@@ -284,6 +281,9 @@ Deno.serve(async (req: Request) => {
             require_pin: true,
             response: '⏰ Oturumunuz sona erdi (10 dakika).\n\nGüvenlik için PIN kodunuzu tekrar girin:',
             session_expired: true,
+            user_id: activeSession.user_id,
+            session_id: activeSession.id,
+            session_token: activeSession.session_token,
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
         );
