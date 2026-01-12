@@ -204,6 +204,7 @@ Deno.serve(async (req: Request) => {
         }
 
         console.log('✅ Session valid - forwarding to backend');
+        console.log(`🔍 DEBUG USER_ID FLOW: Edge Function injecting user_id=${activeSession.user_id} (from session ${activeSession.id})`);
 
         // Backend'e ilet
         // Inject session metadata so backend can always attribute actions correctly.
