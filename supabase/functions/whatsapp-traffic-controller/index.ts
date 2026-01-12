@@ -16,6 +16,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 // @ts-ignore - Deno global
 const BACKEND_URL = Deno.env.get('BACKEND_URL') || 'https://pazarglobal-agent-backend-production-4ec8.up.railway.app';
 const SESSION_DURATION_MINUTES = 10;
+const LAST_ACTIVITY_THROTTLE_SECONDS = 30;
 
 function normalizeBackendBaseUrl(rawUrl: string): string {
   const trimmed = (rawUrl || '').trim().replace(/\/+$/, '');
@@ -145,13 +146,19 @@ Deno.serve(async (req: Request) => {
     
     if (activeSession) {
       const now = new Date();
+      const expiresAtRaw = activeSession.expires_at || null;
+      const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
+
+      // Fallback for legacy sessions (shouldn't happen if schema is correct)
       const sessionStart = new Date(activeSession.created_at);
-      const minutesPassed = (now.getTime() - sessionStart.getTime()) / 1000 / 60;
+      const derivedExpiresAt = new Date(sessionStart.getTime() + SESSION_DURATION_MINUTES * 60 * 1000);
+      const effectiveExpiresAt = expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : derivedExpiresAt;
 
-      console.log(`⏰ Session age: ${minutesPassed.toFixed(2)} minutes`);
+      const secondsLeft = Math.floor((effectiveExpiresAt.getTime() - now.getTime()) / 1000);
+      console.log(`⏰ Session seconds left: ${secondsLeft}`);
 
-      // 10 dakika geçmemiş → TRAFİĞİ GEÇİR ✅
-      if (minutesPassed < SESSION_DURATION_MINUTES) {
+      // Session still valid → TRAFİĞİ GEÇİR ✅
+      if (secondsLeft > 0) {
         // Kullanıcı "iptal" dedi mi?
         const cancelKeywords = ['iptal', 'vazgeç', 'kapat', 'çık', 'cancel', 'stop'];
         const isCancelRequest = cancelKeywords.some(keyword => 
@@ -181,15 +188,33 @@ Deno.serve(async (req: Request) => {
           );
         }
 
-        // Last activity güncelle
-        await supabase
-          .from('user_sessions')
-          .update({ last_activity: now.toISOString() })
-          .eq('id', activeSession.id);
+        // Last activity güncelle (throttled to reduce DB writes)
+        const lastActivityRaw = activeSession.last_activity || null;
+        const lastActivity = lastActivityRaw ? new Date(lastActivityRaw) : null;
+        const lastActivityAgeSeconds = lastActivity && !Number.isNaN(lastActivity.getTime())
+          ? (now.getTime() - lastActivity.getTime()) / 1000
+          : Number.POSITIVE_INFINITY;
+
+        if (lastActivityAgeSeconds >= LAST_ACTIVITY_THROTTLE_SECONDS) {
+          await supabase
+            .from('user_sessions')
+            .update({ last_activity: now.toISOString() })
+            .eq('id', activeSession.id);
+        }
 
         console.log('✅ Session valid - forwarding to backend');
 
         // Backend'e ilet
+        // Inject session metadata so backend can always attribute actions correctly.
+        const injectedSessionContext = {
+          session_token: activeSession.session_token,
+          session_id: activeSession.id,
+          session_expires_at: effectiveExpiresAt.toISOString(),
+          session_last_activity: now.toISOString(),
+          session_type: activeSession.session_type,
+          source: 'whatsapp',
+        };
+
         const backendPayload = {
           user_id: activeSession.user_id,
           phone: phone,
@@ -199,7 +224,13 @@ Deno.serve(async (req: Request) => {
           media_type: requestData.media_type,
           draft_listing_id: requestData.draft_listing_id,
           session_token: activeSession.session_token,
-          user_context: requestData.user_context,
+          user_context: {
+            ...(requestData.user_context || {}),
+            session: {
+              ...((requestData.user_context || {}).session || {}),
+              ...injectedSessionContext,
+            },
+          },
         };
 
         const backendResponse = await fetch(buildBackendUrl('/agent/run'), {
@@ -233,7 +264,7 @@ Deno.serve(async (req: Request) => {
           status: backendResponse.status,
         });
       } else {
-        // 10 dakika geçmiş → SESSION TIMEOUT ⏰
+        // Session expired → SESSION TIMEOUT ⏰
         await supabase
           .from('user_sessions')
           .update({
@@ -242,7 +273,9 @@ Deno.serve(async (req: Request) => {
             end_reason: 'timeout'
           })
           .eq('id', activeSession.id);
-
+            user_id: activeSession.user_id,
+            session_token: activeSession.session_token,
+          })
         console.log('⏰ Session expired (10 min) - closed');
 
         return new Response(
@@ -291,6 +324,17 @@ Deno.serve(async (req: Request) => {
         const now = new Date();
         const expiresAt = new Date(now.getTime() + SESSION_DURATION_MINUTES * 60 * 1000);
 
+        // Defensive: close any existing active sessions for this phone (avoid unique/logic conflicts)
+        await supabase
+          .from('user_sessions')
+          .update({
+            is_active: false,
+            ended_at: now.toISOString(),
+            end_reason: 'manual',
+          })
+          .eq('phone', phone)
+          .eq('is_active', true);
+
         const { data: newSession, error: sessionCreateError } = await supabase
           .from('user_sessions')
           .insert({
@@ -325,6 +369,7 @@ Deno.serve(async (req: Request) => {
             response: `✅ Giriş başarılı!\n\n🕐 ${SESSION_DURATION_MINUTES} dakika boyunca işlem yapabilirsiniz.\n\nNe yapmak istersiniz?`,
             session_token: newSession.session_token,
             expires_at: expiresAt.toISOString(),
+            user_id: result.user_id,
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
