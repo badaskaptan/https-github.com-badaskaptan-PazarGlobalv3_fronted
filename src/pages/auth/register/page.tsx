@@ -40,6 +40,17 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
+      // ⚠️ GÜVENLİK: Telefon numarasının daha önce kullanılıp kullanılmadığını kontrol et
+      const { data: existingPhone } = await supabase
+        .from('profiles')
+        .select('id, phone')
+        .eq('phone', formData.phone)
+        .limit(1);
+
+      if (existingPhone && existingPhone.length > 0) {
+        throw new Error('Bu telefon numarası zaten kayıtlı. Lütfen giriş yapın veya farklı bir numara kullanın.');
+      }
+
       // Supabase Auth ile kayıt
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
