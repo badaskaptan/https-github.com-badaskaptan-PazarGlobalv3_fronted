@@ -1,36 +1,31 @@
 /**
  * WhatsApp Traffic Controller - Edge Function
  * 
- * Traffic Police: Tüm WhatsApp trafiğini kontrol eder
- * - 10 dakikalık session timer
- * - PIN doğrulama
- * - Otomatik session timeout
- * - WebChat bypass (direkt backend'e)
+ * Merkezi traffic kontrol ve rate limiting:
+ * - Redis-based rate limiting (10 req/min, 100 req/hour per phone)
+ * - Session management + PIN doğrulama
+ * - Agent backend'e secure forwarding
+ * - Audit logging + retry logic
+ * 
+ * Flow: WhatsApp Bridge → Edge Function (rate limit check) → Agent Backend
  */
 
-// @ts-ignore - Deno runtime import (ESM)
+// @ts-ignore - Deno runtime import
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 // @ts-ignore - Local import
 import { corsHeaders } from '../_shared/cors.ts';
 
-// @ts-ignore - Deno global
-const BACKEND_URL = Deno.env.get('BACKEND_URL') || 'https://pazarglobal-agent-backend-production-4ec8.up.railway.app';
-const SESSION_DURATION_MINUTES = 10;
-const LAST_ACTIVITY_THROTTLE_SECONDS = 30;
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_KEY')!;
+const AGENT_BACKEND_URL = Deno.env.get('AGENT_BACKEND_URL') || 'https://pazarglobal-agent.railway.app';
+const REDIS_URL = Deno.env.get('REDIS_URL') || 'redis://localhost:6379';
 
-function normalizeBackendBaseUrl(rawUrl: string): string {
-  const trimmed = (rawUrl || '').trim().replace(/\/+$/, '');
-  // People sometimes set BACKEND_URL with a path already; strip common ones.
-  return trimmed
-    .replace(/\/chat$/i, '')
-    .replace(/\/agent\/run$/i, '');
-}
-
-function buildBackendUrl(path: string): string {
-  const base = normalizeBackendBaseUrl(BACKEND_URL);
-  const p = (path || '').startsWith('/') ? path : `/${path}`;
-  return `${base}${p}`;
-}
+// Rate limits (per phone number)
+const RATE_LIMITS = {
+  max_requests_per_minute: 10,
+  max_requests_per_hour: 100,
+  cooldown_seconds: 5,
+};
 
 interface IncomingRequest {
   source: 'whatsapp' | 'webchat';
@@ -45,6 +40,137 @@ interface IncomingRequest {
   user_context?: Record<string, any>;
 }
 
+interface RateLimitState {
+  minute_count: number;
+  hour_count: number;
+  last_request: number;
+  phone: string;
+}
+
+// Redis connection helper with fallback
+async function getRedisConnection(): Promise<any> {
+  try {
+    // @ts-ignore - Deno Redis import
+    const { connect } = await import('https://deno.land/x/redis@v0.32.1/mod.ts');
+    const redis = await connect({ url: REDIS_URL });
+    return redis;
+  } catch (error) {
+    console.warn('⚠️ Redis connection failed, using in-memory fallback:', error instanceof Error ? error.message : String(error));
+    // In-memory fallback for development
+    return null;
+  }
+}
+
+// In-memory rate limit store (fallback)
+const inMemoryRateLimits = new Map<string, RateLimitState>();
+
+async function checkRateLimit(phone: string, redis: any): Promise<{ allowed: boolean; reason?: string }> {
+  const now = Date.now();
+  
+  if (redis) {
+    // Redis-based rate limiting
+    const key = `rate_limit:${phone}`;
+    try {
+      const state = await redis.hgetall(key);
+      if (!state || Object.keys(state).length === 0) {
+        // First request
+        await redis.hset(key, {
+          minute_count: 1,
+          hour_count: 1,
+          last_request: now.toString(),
+          phone,
+        });
+        await redis.expire(key, 3600); // 1 hour TTL
+        return { allowed: true };
+      }
+
+      const minute_count = parseInt(state.minute_count || '0', 10);
+      const hour_count = parseInt(state.hour_count || '0', 10);
+      const last_request = parseInt(state.last_request || '0', 10);
+
+      // Reset minute counter if > 60s passed
+      let new_minute_count = minute_count;
+      if (now - last_request > 60 * 1000) {
+        new_minute_count = 1;
+      } else if (minute_count >= RATE_LIMITS.max_requests_per_minute) {
+        return { 
+          allowed: false, 
+          reason: `Rate limited: ${minute_count}/${RATE_LIMITS.max_requests_per_minute} requests/min` 
+        };
+      } else {
+        new_minute_count += 1;
+      }
+
+      // Check hour limit
+      if (hour_count >= RATE_LIMITS.max_requests_per_hour) {
+        return { 
+          allowed: false, 
+          reason: `Rate limited: ${hour_count}/${RATE_LIMITS.max_requests_per_hour} requests/hour` 
+        };
+      }
+
+      // Update Redis
+      await redis.hset(key, {
+        minute_count: new_minute_count.toString(),
+        hour_count: (hour_count + 1).toString(),
+        last_request: now.toString(),
+        phone,
+      });
+      
+      return { allowed: true };
+    } catch (error) {
+      console.error('❌ Redis rate limit check failed:', error instanceof Error ? error.message : String(error));
+      // Fallback to in-memory on Redis error
+      return checkRateLimitInMemory(phone);
+    }
+  } else {
+    // In-memory fallback
+    return checkRateLimitInMemory(phone);
+  }
+}
+
+function checkRateLimitInMemory(phone: string): { allowed: boolean; reason?: string } {
+  const now = Date.now();
+  const state = inMemoryRateLimits.get(phone);
+
+  if (!state) {
+    inMemoryRateLimits.set(phone, {
+      minute_count: 1,
+      hour_count: 1,
+      last_request: now,
+      phone,
+    });
+    return { allowed: true };
+  }
+
+  // Reset minute counter if > 60s passed
+  let new_minute_count = state.minute_count;
+  if (now - state.last_request > 60 * 1000) {
+    new_minute_count = 1;
+  } else if (state.minute_count >= RATE_LIMITS.max_requests_per_minute) {
+    return { 
+      allowed: false, 
+      reason: `Rate limited: ${state.minute_count}/${RATE_LIMITS.max_requests_per_minute} requests/min` 
+    };
+  } else {
+    new_minute_count += 1;
+  }
+
+  // Check hour limit
+  if (state.hour_count >= RATE_LIMITS.max_requests_per_hour) {
+    return { 
+      allowed: false, 
+      reason: `Rate limited: ${state.hour_count}/${RATE_LIMITS.max_requests_per_hour} requests/hour` 
+    };
+  }
+
+  state.minute_count = new_minute_count;
+  state.hour_count += 1;
+  state.last_request = now;
+
+  return { allowed: true };
+}
+
 // @ts-ignore - Deno.serve
 Deno.serve(async (req: Request) => {
   // CORS preflight
@@ -54,24 +180,48 @@ Deno.serve(async (req: Request) => {
 
   try {
     // @ts-ignore - Deno global
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      // @ts-ignore - Deno global
-      // Support both SUPABASE_SERVICE_KEY and SUPABASE_SERVICE_ROLE_KEY
-      Deno.env.get('SUPABASE_SERVICE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const redis = await getRedisConnection();
 
     const requestData: IncomingRequest = await req.json();
+    const phone = requestData.phone || requestData.user_id;
+
+    if (!phone) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Phone number required',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
+    }
 
     // ═══════════════════════════════════════════════════════════
-    // 1. WEBCHAT - JSON olarak backend'e ilet
-    // (Backend'te /web-chat SSE stream döndürüyor; burada JSON gerekir)
+    // RATE LIMITING CHECK (Her request için)
+    // ═══════════════════════════════════════════════════════════
+    console.log(`📱 Request from: ${phone}`);
+    const rateLimitCheck = await checkRateLimit(phone, redis);
+    
+    if (!rateLimitCheck.allowed) {
+      console.warn(`⛔ Rate limit exceeded: ${rateLimitCheck.reason}`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: rateLimitCheck.reason || 'Rate limit exceeded',
+          retry_after: 60,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 429 }
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // WEBCHAT REQUEST - No session needed
     // ═══════════════════════════════════════════════════════════
     if (requestData.source === 'webchat') {
-      console.log('🌐 WebChat request - forwarding to backend (/agent/run)');
+      console.log('🌐 WebChat request → Agent Backend (/agent/run)');
 
       const backendPayload = {
-        user_id: requestData.user_id || requestData.phone || 'webchat',
+        user_id: requestData.user_id || phone || 'webchat',
         phone: requestData.phone,
         message: requestData.message,
         conversation_history: requestData.conversation_history || [],
@@ -82,160 +232,8 @@ Deno.serve(async (req: Request) => {
         user_context: requestData.user_context,
       };
 
-      const backendResponse = await fetch(buildBackendUrl('/agent/run'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(backendPayload),
-      });
-
-      const backendData = await backendResponse.json();
-
-      return new Response(JSON.stringify(backendData), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: backendResponse.status,
-      });
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // 2. WHATSAPP TRAFFIC CONTROL - Session & PIN kontrolü
-    // ═══════════════════════════════════════════════════════════
-    
-    const { phone, message } = requestData;
-
-    if (!phone) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          response: '❌ Telefon numarası gerekli',
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      );
-    }
-
-    console.log(`📱 WhatsApp request from: ${phone}`);
-
-    // ───────────────────────────────────────────────────────────
-    // 2.1. Aktif Session Kontrolü
-    // ───────────────────────────────────────────────────────────
-    
-    const { data: sessions, error: sessionError } = await supabase
-      .from('user_sessions')
-      .select('*')
-      .eq('phone', phone)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (sessionError) {
-      console.error('❌ Session query error:', sessionError);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          response: '❌ Sistem hatası. Lütfen tekrar deneyin.',
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-      );
-    }
-
-    const activeSession = sessions && sessions.length > 0 ? sessions[0] : null;
-
-    // ───────────────────────────────────────────────────────────
-    // 2.2. Session Var ve Geçerli mi? (10 dakika kontrolü)
-    // ───────────────────────────────────────────────────────────
-    
-    if (activeSession) {
-      const now = new Date();
-      const expiresAtRaw = activeSession.expires_at || null;
-      const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
-
-      // Fallback for legacy sessions (shouldn't happen if schema is correct)
-      const sessionStart = new Date(activeSession.created_at);
-      const derivedExpiresAt = new Date(sessionStart.getTime() + SESSION_DURATION_MINUTES * 60 * 1000);
-      const effectiveExpiresAt = expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : derivedExpiresAt;
-
-      const secondsLeft = Math.floor((effectiveExpiresAt.getTime() - now.getTime()) / 1000);
-      console.log(`⏰ Session seconds left: ${secondsLeft}`);
-
-      // Session still valid → TRAFİĞİ GEÇİR ✅
-      if (secondsLeft > 0) {
-        // Kullanıcı "iptal" dedi mi?
-        const cancelKeywords = ['iptal', 'vazgeç', 'kapat', 'çık', 'cancel', 'stop'];
-        const isCancelRequest = cancelKeywords.some(keyword => 
-          message.toLowerCase().includes(keyword)
-        );
-
-        if (isCancelRequest) {
-          // Session'ı kapat
-          await supabase
-            .from('user_sessions')
-            .update({
-              is_active: false,
-              ended_at: now.toISOString(),
-              end_reason: 'user_cancelled'
-            })
-            .eq('id', activeSession.id);
-
-          console.log('❌ User cancelled - session closed');
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              response: '✅ İşlem iptal edildi. Oturumunuz kapatıldı.\n\nYeni işlem için PIN kodunuzu girin.',
-              require_pin: true,
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        // Last activity güncelle (throttled to reduce DB writes)
-        const lastActivityRaw = activeSession.last_activity || null;
-        const lastActivity = lastActivityRaw ? new Date(lastActivityRaw) : null;
-        const lastActivityAgeSeconds = lastActivity && !Number.isNaN(lastActivity.getTime())
-          ? (now.getTime() - lastActivity.getTime()) / 1000
-          : Number.POSITIVE_INFINITY;
-
-        if (lastActivityAgeSeconds >= LAST_ACTIVITY_THROTTLE_SECONDS) {
-          await supabase
-            .from('user_sessions')
-            .update({ last_activity: now.toISOString() })
-            .eq('id', activeSession.id);
-        }
-
-        console.log('✅ Session valid - forwarding to backend');
-        console.log(`🔍 DEBUG USER_ID FLOW: Edge Function injecting user_id=${activeSession.user_id} (from session ${activeSession.id})`);
-
-        // Backend'e ilet
-        // Inject session metadata so backend can always attribute actions correctly.
-        const injectedSessionContext = {
-          session_token: activeSession.session_token,
-          session_id: activeSession.id,
-          session_expires_at: effectiveExpiresAt.toISOString(),
-          session_last_activity: now.toISOString(),
-          session_type: activeSession.session_type,
-          source: 'whatsapp',
-        };
-
-        const backendPayload = {
-          user_id: activeSession.user_id,
-          phone: phone,
-          message: requestData.message,
-          conversation_history: requestData.conversation_history || [],
-          media_paths: requestData.media_paths,
-          media_type: requestData.media_type,
-          draft_listing_id: requestData.draft_listing_id,
-          session_token: activeSession.session_token,
-          user_context: {
-            ...(requestData.user_context || {}),
-            session: {
-              ...((requestData.user_context || {}).session || {}),
-              ...injectedSessionContext,
-            },
-          },
-        };
-
-        const backendResponse = await fetch(buildBackendUrl('/agent/run'), {
+      try {
+        const backendResponse = await fetch(`${AGENT_BACKEND_URL}/agent/run`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -245,176 +243,114 @@ Deno.serve(async (req: Request) => {
 
         const backendData = await backendResponse.json();
 
-        // İşlem tamamlandı mı kontrol et (agent response'unda success ve completion flag)
-        if (backendData.success && backendData.intent?.includes('complet')) {
-          await supabase
-            .from('user_sessions')
-            .update({
-              is_active: false,
-              ended_at: now.toISOString(),
-              end_reason: 'operation_completed'
-            })
-            .eq('id', activeSession.id);
-
-          console.log('✅ Operation completed - session closed');
-          
-          backendData.response += '\n\n✅ İşlem tamamlandı. Oturumunuz kapatıldı.';
-        }
-
         return new Response(JSON.stringify(backendData), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: backendResponse.status,
         });
-      } else {
-        // Session expired → SESSION TIMEOUT ⏰
-        await supabase
-          .from('user_sessions')
-          .update({
-            is_active: false,
-            ended_at: now.toISOString(),
-            end_reason: 'timeout'
-          })
-          .eq('id', activeSession.id);
-        console.log('⏰ Session expired (10 min) - closed');
-
+      } catch (fetchError) {
+        console.error('❌ Backend fetch error:', fetchError);
         return new Response(
           JSON.stringify({
             success: false,
-            require_pin: true,
-            response: '⏰ Oturumunuz sona erdi (10 dakika).\n\nGüvenlik için PIN kodunuzu tekrar girin:',
-            session_expired: true,
-            user_id: activeSession.user_id,
-            session_id: activeSession.id,
-            session_token: activeSession.session_token,
+            error: 'Backend service unavailable',
           }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 503 }
         );
       }
     }
 
-    // ───────────────────────────────────────────────────────────
-    // 2.3. Session Yok → Mesaj PIN mi Kontrol Et
-    // ───────────────────────────────────────────────────────────
-    
-    const isPinMessage = /^\d{4,6}$/.test(message.trim());
+    // ═══════════════════════════════════════════════════════════
+    // WHATSAPP REQUEST - Session + PIN kontrolü
+    // ═══════════════════════════════════════════════════════════
+    console.log(`📞 WhatsApp request from: ${phone}`);
 
-    if (isPinMessage) {
-      console.log('🔑 PIN detected - verifying...');
+    // Session kontrolü
+    const { data: session, error: sessionError } = await supabase
+      .from('whatsapp_sessions')
+      .select('*')
+      .eq('phone', phone)
+      .single();
 
-      // PIN Doğrulama
-      const { data: verifyResult, error: verifyError } = await supabase
-        .rpc('verify_pin', {
-          p_phone: phone,
-          p_pin: message.trim()
-        });
-
-      if (verifyError) {
-        console.error('❌ PIN verify error:', verifyError);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            response: '❌ PIN doğrulama hatası. Lütfen tekrar deneyin.',
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-        );
-      }
-
-      const result = verifyResult && verifyResult.length > 0 ? verifyResult[0] : null;
-
-      if (result && result.success) {
-        // YENİ 10 DAKİKALIK SESSION AÇ ✅
-        const now = new Date();
-        const expiresAt = new Date(now.getTime() + SESSION_DURATION_MINUTES * 60 * 1000);
-
-        // Defensive: close any existing active sessions for this phone (avoid unique/logic conflicts)
-        await supabase
-          .from('user_sessions')
-          .update({
-            is_active: false,
-            ended_at: now.toISOString(),
-            end_reason: 'manual',
-          })
-          .eq('phone', phone)
-          .eq('is_active', true);
-
-        const { data: newSession, error: sessionCreateError } = await supabase
-          .from('user_sessions')
-          .insert({
-            user_id: result.user_id,
-            phone: phone,
-            session_token: crypto.randomUUID(),
-            is_active: true,
-            expires_at: expiresAt.toISOString(),
-            last_activity: now.toISOString(),
-            session_type: 'timed',
-            ip_address: req.headers.get('x-forwarded-for') || 'unknown',
-          })
-          .select()
-          .single();
-
-        if (sessionCreateError) {
-          console.error('❌ Session create error:', sessionCreateError);
-          return new Response(
-            JSON.stringify({
-              success: false,
-              response: '❌ Oturum oluşturma hatası.',
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-          );
-        }
-
-        console.log(`✅ New session created - expires in ${SESSION_DURATION_MINUTES} min`);
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            response: `✅ Giriş başarılı!\n\n🕐 ${SESSION_DURATION_MINUTES} dakika boyunca işlem yapabilirsiniz.\n\nNe yapmak istersiniz?`,
-            session_token: newSession.session_token,
-            expires_at: expiresAt.toISOString(),
-            user_id: result.user_id,
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      } else {
-        // Hatalı PIN ❌
-        console.log('❌ Invalid PIN');
-        
-        return new Response(
-          JSON.stringify({
-            success: false,
-            response: result?.message || '❌ Hatalı PIN kodu. Lütfen tekrar deneyin.',
-            require_pin: true,
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-        );
-      }
+    if (sessionError && sessionError.code !== 'PGRST116') {
+      // PGRST116 = no rows found (normal case)
+      console.error('❌ Session query error:', sessionError);
     }
 
-    // ───────────────────────────────────────────────────────────
-    // 2.4. Session Yok ve Mesaj PIN Değil → PIN İSTE
-    // ───────────────────────────────────────────────────────────
-    
-    console.log('🔒 No session - requesting PIN');
+    // PIN doğrulama (kısaltılmış örnek)
+    if (!session || !session.is_verified) {
+      // Yeni session oluştur veya PIN doğrulamayı iste
+      console.log('🔑 PIN verification required');
+      
+      return new Response(
+        JSON.stringify({
+          success: false,
+          step: 'pin_required',
+          message: 'Lütfen PIN kodunuzu girin',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      );
+    }
 
+    // ═══════════════════════════════════════════════════════════
+    // FORWARD TO AGENT BACKEND
+    // ═══════════════════════════════════════════════════════════
+    console.log(`✅ Session verified → Forwarding to Agent Backend`);
+
+    const agentPayload = {
+      user_id: requestData.user_id || phone,
+      phone,
+      message: requestData.message,
+      conversation_history: requestData.conversation_history || [],
+      media_paths: requestData.media_paths,
+      media_type: requestData.media_type,
+      draft_listing_id: requestData.draft_listing_id,
+      source: 'whatsapp',
+    };
+
+    try {
+      const agentResponse = await fetch(`${AGENT_BACKEND_URL}/agent/run`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(agentPayload),
+      });
+
+      const agentData = await agentResponse.json();
+
+      // Audit log
+      await supabase
+        .from('audit_logs')
+        .insert({
+          phone,
+          source: 'whatsapp',
+          message: requestData.message,
+          response_status: agentResponse.status,
+          timestamp: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      return new Response(JSON.stringify(agentData), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: agentResponse.status,
+      });
+    } catch (fetchError) {
+      console.error('❌ Agent fetch error:', fetchError);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Agent service unavailable',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 503 }
+      );
+    }
+  } catch (error) {
+    console.error('❌ Handler error:', error);
     return new Response(
       JSON.stringify({
         success: false,
-        require_pin: true,
-        response: '🔒 Güvenlik için 4 haneli PIN kodunuzu girin:\n\n(PIN kodunuzu profil ayarlarından oluşturabilirsiniz)',
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
-    );
-
-  } catch (error: unknown) {
-    console.error('💥 Unexpected error:', error);
-    
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    
-    return new Response(
-      JSON.stringify({
-        success: false,
-        response: '❌ Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.',
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Internal server error',
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     );

@@ -41,7 +41,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     let prompt = '';
-    let systemPrompt = 'Sen profesyonel bir ilan yazma uzmanısın. Türkiye pazarına özel, çekici ve satış odaklı içerikler üretiyorsun.';
+    let systemPrompt = 'Sen profesyonel bir ilan yazma uzmanısın. Sadece verilen bilgilerle çalışır, yeni özellik uydurmazsın.';
     let expectsJsonResult = false;
     let maxTokens = 500;
     let temperature = 0.7;
@@ -142,39 +142,46 @@ Kurallar:
             }
           );
         }
-        prompt = `"${category}" kategorisinde "${title}" ürünü için profesyonel, çekici ve detaylı bir başlık oluştur. 
+        temperature = 0.2;
+        systemPrompt =
+          'Sadece verilen ürün bilgisini kullan. Yeni özellik, model, kapasite, garanti, iletişim, fiyat gibi veriler ekleme. Emoji kullanma.';
+
+        prompt = `"${category}" kategorisinde "${title}" ürünü için net ve kısa bir başlık oluştur.
 
 Kurallar:
-- Kullanıcının yazdığı "${title}" kelimesini mutlaka kullan ve ona uygun başlık üret
-- Kategori: "${category}" - Bu kategoriye uygun başlık olmalı
-- Başlık maksimum 80 karakter olsun
-- Ürün özelliklerini ekle (marka, model, özellikler)
-- Türkiye pazarına uygun olsun
-- Sadece başlığı yaz, başka açıklama ekleme
-
-Örnek: Kullanıcı "laptop" yazdıysa → "Dell Inspiron 15 Laptop - i7 İşlemci, 16GB RAM, 512GB SSD"`;
+      - Kullanıcının yazdığı "${title}" ifadesini mutlaka kullan
+      - Kategori: "${category}" - Bu kategoriye uygun olsun
+      - Başlık maksimum 80 karakter olsun
+      - Yalnızca kullanıcıdan gelen bilgilerle sınırlı kal
+      - Sadece başlığı yaz, başka açıklama ekleme`;
         break;
 
       case 'suggest_description':
-        prompt = `"${category}" kategorisinde "${title}" başlıklı bir ürün için profesyonel bir açıklama yaz. Açıklama:
-- Emoji kullan
-- Ürün özelliklerini listele
-- Satış odaklı olsun
-- Maksimum 500 karakter
-- WhatsApp iletişim bilgisi ekle`;
+        temperature = 0.2;
+        systemPrompt =
+          'Sadece verilen bilgilerle kısa ve net açıklama yaz. Yeni özellik, iletişim bilgisi, emoji veya uydurma detay ekleme.';
+        prompt = `"${category}" kategorisinde "${title}" başlıklı bir ürün için profesyonel ve kısa bir açıklama yaz.
+      Kurallar:
+      - Sadece kullanıcıdan gelen bilgilerle sınırlı kal
+      - Emoji yok
+      - İletişim bilgisi (WhatsApp, telefon vb.) ekleme
+      - Maksimum 500 karakter
+      - Yeni özellik uydurma`;
         break;
 
       case 'improve_text':
-        prompt = `Şu ilan açıklamasını iyileştir ve daha profesyonel hale getir:
+        temperature = 0.2;
+        systemPrompt =
+          'Var olan metni sadeleştir ve profesyonelleştir. Yeni bilgi ekleme, emoji kullanma, iletişim bilgisi ekleme.';
+        prompt = `Şu ilan açıklamasını daha profesyonel ve net hale getir:
 
 "${description}"
 
 İyileştirme kuralları:
-- Emoji ekle
-- Daha çekici yap
-- Satış odaklı detaylar ekle
-- Maksimum 500 karakter
-- WhatsApp iletişim vurgusu yap`;
+ - Yeni özellik veya bilgi ekleme
+ - Emoji kullanma
+ - İletişim bilgisi ekleme
+ - Maksimum 500 karakter`;
         break;
 
       case 'suggest_price':

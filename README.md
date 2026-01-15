@@ -1,5 +1,7 @@
 # 🌐 PazarGlobal Frontend
 
+Son güncelleme: 2026-01-16
+
 **AI-Powered Listing Platform - Web Interface**
 
 PazarGlobal'in modern, responsive web arayüzü. Next.js ile geliştirilmiş, AI chatbot entegrasyonlu ilan platformu.

@@ -129,7 +129,7 @@ export default function ManageListingsPage() {
           throw new Error('Lütfen sadece görsel dosyası seçin');
         }
         if (file.size > 10 * 1024 * 1024) {
-          throw new Error(`${file.name} 10MB\'dan büyük`);
+          throw new Error(`${file.name} 10MB'dan büyük`);
         }
         
         const reader = new FileReader();
