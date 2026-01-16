@@ -39,11 +39,15 @@ const AGENT_API_BASE =
 // Generate or retrieve unique user ID
 const getUserId = (): string => {
   let userId = localStorage.getItem('web_user_id');
-  if (!userId) {
-    userId = `web_user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const isUuid = (value: string | null) =>
+    Boolean(value && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value));
+
+  if (!isUuid(userId)) {
+    userId = (crypto?.randomUUID ? crypto.randomUUID() : null) || `web_user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     localStorage.setItem('web_user_id', userId);
   }
-  return userId;
+
+  return userId as string;
 };
 
 // Parse listing data from message
@@ -189,6 +193,7 @@ const uploadImageToSupabase = async (file: File, userId: string): Promise<{ stor
 export default function ChatBox() {
   const navigate = useNavigate();
   const { user, customUser } = useAuthStore();
+  const profile = useAuthStore((state) => state.profile);
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('listing');
   const [messages, setMessages] = useState<Message[]>([
@@ -311,6 +316,12 @@ export default function ChatBox() {
       throw new Error('VITE_AGENT_API_BASE tanımlı değil. Agent API adresini .env dosyanıza ekleyin.');
     }
     const endpoint = `${AGENT_API_BASE.replace(/\/$/, '')}/webchat/message`;
+    const displayName =
+      profile?.display_name ||
+      profile?.full_name ||
+      customUser?.full_name ||
+      user?.email ||
+      undefined;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -322,6 +333,9 @@ export default function ChatBox() {
         user_id: resolvedUserId,
         media_url: mediaPayload.publicUrls[0],
         media_urls: mediaPayload.publicUrls.length > 0 ? mediaPayload.publicUrls : undefined,
+        user_context: {
+          display_name: displayName,
+        },
       }),
     });
 
