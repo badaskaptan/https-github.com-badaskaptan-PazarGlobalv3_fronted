@@ -260,15 +260,40 @@ Deno.serve(async (req: Request) => {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // WHATSAPP REQUEST - Session + PIN kontrolü
+    // WHATSAPP REQUEST - Session + PIN kontrolü + USER_ID LOOKUP
     // ═══════════════════════════════════════════════════════════
     console.log(`📞 WhatsApp request from: ${phone}`);
+
+    // ⭐ KRİTİK: Telefon numarası ile user_id'yi bul (referans doküman çözümü)
+    const { data: user, error: userError } = await supabase
+      .from('profiles')
+      .select('id, phone, display_name, full_name')
+      .eq('phone', phone)
+      .single();
+
+    if (userError || !user) {
+      console.warn(`⚠️ Telefon numarası kayıtlı değil: ${phone}`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          step: 'registration_required',
+          response: '❌ Bu telefon numarası kayıtlı değil.\n\n' +
+                    '🔗 Kayıt olmak için: https://pazarglobal.com/auth/register\n\n' +
+                    'Kayıt olduktan sonra profil ayarlarından WhatsApp PIN\'ini aktifleştirin.',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      );
+    }
+
+    const userId = user.id; // ⭐ Artık her zaman aynı user_id kullanılıyor
+    console.log(`✅ User ID found: ${userId} for phone: ${phone}`);
 
     // Session kontrolü
     const { data: session, error: sessionError } = await supabase
       .from('whatsapp_sessions')
       .select('*')
       .eq('phone', phone)
+      .eq('user_id', userId) // user_id ile de eşleştir
       .single();
 
     if (sessionError && sessionError.code !== 'PGRST116') {
@@ -285,19 +310,20 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           success: false,
           step: 'pin_required',
-          message: 'Lütfen PIN kodunuzu girin',
+          response: 'Lütfen PIN kodunuzu girin. PIN\'inizi hatırlamıyorsanız web sitesinden profil ayarlarınızdan yeni PIN oluşturabilirsiniz.',
+          user_id: userId, // Frontend'e user_id'yi gönder
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
       );
     }
 
     // ═══════════════════════════════════════════════════════════
-    // FORWARD TO AGENT BACKEND
+    // FORWARD TO AGENT BACKEND (with correct user_id)
     // ═══════════════════════════════════════════════════════════
-    console.log(`✅ Session verified → Forwarding to Agent Backend`);
+    console.log(`✅ Session verified → Forwarding to Agent Backend with user_id: ${userId}`);
 
     const agentPayload = {
-      user_id: requestData.user_id || phone,
+      user_id: userId, // ⭐ Telefon numarasından bulunan user_id kullanılıyor
       phone,
       message: requestData.message,
       conversation_history: requestData.conversation_history || [],
@@ -305,6 +331,10 @@ Deno.serve(async (req: Request) => {
       media_type: requestData.media_type,
       draft_listing_id: requestData.draft_listing_id,
       source: 'whatsapp',
+      user_context: {
+        display_name: user.display_name || user.full_name,
+        ...requestData.user_context,
+      },
     };
 
     try {
